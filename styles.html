@@ -302,6 +302,108 @@
   .t-paper { border: 1px solid var(--ink); min-height: 240px; }
   .t-placeholder { margin: 0; color: var(--ink-soft); }
 
+  /* 채점 탭 */
+  .grade-views { display: flex; flex-wrap: wrap; gap: 0 18px; margin: 0 0 12px; }
+  .grade-view-btn {
+    min-height: 44px;
+    padding: 8px 2px 6px;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    background: none;
+    color: var(--ink);
+    font: 400 13px var(--font-body);
+    cursor: pointer;
+  }
+  .grade-view-btn[aria-pressed="true"] { font-weight: 800; border-bottom-color: var(--ink); }
+  .q-picker { display: flex; flex-wrap: wrap; padding: 0 1px 1px 0; margin-bottom: 14px; }
+  .q-pick {
+    position: relative;
+    min-width: 44px;
+    height: 44px;
+    margin: 0 -1px -1px 0;
+    padding: 0 10px;
+    border: 1px solid var(--ink);
+    border-radius: 0;
+    background: var(--paper-shade);
+    color: var(--ink);
+    font: 800 14px var(--font-body);
+    cursor: pointer;
+  }
+  .q-pick[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+  .q-pick--pending::after {
+    content: "";
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .q-pick:focus-visible { z-index: 1; }
+  .grade-qbar { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-bottom: 10px; }
+  .grade-qhead { flex: 1 1 320px; min-width: 0; font-size: 12px; overflow-wrap: anywhere; }
+  .grade-qtitle { display: inline; font-size: 16px; }
+  .grade-auto { display: inline-block; margin-left: 8px; padding: 0 5px; border: 1px solid var(--ink); font-size: 11px; white-space: nowrap; }
+  .grade-remain { margin-left: auto; font-size: 12px; font-weight: 700; white-space: nowrap; }
+  .grade-after-note { margin: 0 0 10px; }
+  .grade-table td.who { width: 120px; font-weight: 700; overflow-wrap: anywhere; }
+  .grade-table td.answer, #gradeSheet td.answer, #gradeSheet td.correct { overflow-wrap: anywhere; }
+  .sheet-table th.mark-col, .sheet-table td.mark-td { width: 196px; }
+  .sheet-table td.mark-td { white-space: nowrap; }
+  .grade-cell .score-error { white-space: normal; margin-top: 4px; }
+  .answer-empty { color: var(--ink-soft); }
+  tr.is-pending td { background: var(--paper-lift); }
+  .score-input { -moz-appearance: textfield; appearance: textfield; padding: 0 2px; }
+  .score-input::-webkit-inner-spin-button, .score-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  .score-input::placeholder { color: var(--ink-soft); font: 400 12px var(--font-body); }
+
+  .grade-split { display: grid; grid-template-columns: minmax(170px, 210px) minmax(0, 1fr); gap: 16px; align-items: start; }
+  .roster-table th { white-space: nowrap; }
+  .roster-table td { font-size: 12px; padding: 0 7px; }
+  .roster-table td.num { width: 36px; }
+  .roster-table td.score { width: 52px; text-align: center; }
+  .roster-table tr.is-selected td { background: var(--paper-lift); }
+  .roster-pick {
+    display: block;
+    width: 100%;
+    min-height: 36px;
+    padding: 4px 0;
+    border: 0;
+    background: none;
+    color: var(--ink);
+    font: 400 12px var(--font-body);
+    text-align: left;
+    overflow-wrap: anywhere;
+    cursor: pointer;
+  }
+  .roster-pick[aria-pressed="true"] { font-weight: 800; }
+  .wait-tag { padding: 0 4px; border: 1px solid var(--ink); font-size: 11px; white-space: nowrap; }
+  .grade-student { min-width: 0; }
+  .grade-student-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 6px; }
+  .grade-student-head h2 { font-size: 16px; overflow-wrap: anywhere; }
+  .grade-student-total { font-size: 28px; white-space: nowrap; }
+  #gradeSheet th.num-col { width: 40px; }
+  #gradeSheet th.correct-col { width: 120px; }
+  #gradeSheet td.correct.criteria { font-size: 11px; }
+  .comment-input {
+    display: block;
+    width: 100%;
+    margin-top: 12px;
+    padding: 4px 2px;
+    border: 0;
+    border-bottom: 1px solid var(--red-pen);
+    border-radius: 0;
+    background: transparent;
+    color: var(--red-pen);
+    font: 400 22px var(--font-pen);
+  }
+  .comment-input::placeholder { color: var(--ink-soft); }
+  .finish-area { margin-top: 12px; }
+  .finish-buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+  .finish-warn { margin: 0 0 10px; text-align: left; }
+
   /* 비밀번호 쪽지 */
   .modal-backdrop {
     position: fixed;
@@ -332,6 +434,9 @@
   /* 선생님 2단 -> 1단 */
   @media (max-width: 900px) {
     .paper--wide { padding: 16px; }
+    /* 학생별 보기: 명렬표가 위로 올라가고 길면 그 안에서 스크롤 */
+    .grade-split { grid-template-columns: minmax(0, 1fr); }
+    .grade-roster-wrap { max-height: 232px; overflow-y: auto; }
   }
   @media (max-width: 520px) {
     body { padding: 10px 8px 40px; }
@@ -352,6 +457,14 @@
     .line-input.other-num::placeholder { font-size: 12px; color: var(--ink-soft); }
     .answer-table .blank-row { gap: 0; }
     .answer-table .blank-label { margin-right: 4px; }
+    /* 채점 칸은 2x2로 접어 답 칸 자리를 남긴다 */
+    .sheet-table th.mark-col, .sheet-table td.mark-td { width: 86px; }
+    .sheet-table td.mark-td { white-space: normal; }
+    .grade-cell .mark-cells { flex-wrap: wrap; width: 76px; }
+    .grade-cell .score-input { width: 36px; }
+    .grade-table td.who { width: 72px; }
+    #gradeSheet th.num-col { width: 30px; }
+    #gradeSheet th.correct-col { width: 76px; }
   }
 
   @media (prefers-reduced-motion: reduce) {

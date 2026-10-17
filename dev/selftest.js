@@ -75,6 +75,9 @@
         await confirmTeacherLogin();
         var t = params.get('tab');
         if (t) switchTab(t);
+        // 채점 탭 보기: &gview=byStudent
+        var gv = params.get('gview');
+        if (gv) { teacherState.gradeView = gv; renderGradePanel(); }
       }, 300);
     });
   }
@@ -734,7 +737,7 @@
     assertEq(tById('tExamTitle').textContent, '사회 2단원 평가 답안지');
     assertEq(teacherState.tab, 'grade');
     assertEq(teacherState.gradeView, 'byQuestion');
-    assertEq(teacherState.selectedQNum, null);
+    assertEq(teacherState.selectedQNum, 6); // Task 6: 채점 탭이 첫 채점 순서 문항을 고른다
     assertEq(teacherState.selectedRowIndex, null);
     assertEq(teacherState.pw, '1234');
     assertEq(teacherState.submissions.length, 5);
@@ -930,6 +933,419 @@
     assertEq([el.selectionStart, el.selectionEnd], [0, 4]);
     assertEq(document.activeElement.id, 'teacherPwInput');
     closeTeacherLogin();
+  }, { scenario: 'teacher' });
+
+  // ===== Task 6: 채점 탭 =====
+  var FAIL_MODE = !!params.get('fail');
+  // 스텁을 처음 상태로 되돌리고(앞 테스트의 채점 흔적 제거) 응답 지연을 0으로 고정한 뒤 로그인
+  async function gradeLogin() {
+    window.__stubReset();
+    window.__stubDelay = 0;
+    window.__stubFailQueue = {};
+    await teacherLogin('1234');
+  }
+  function gradeCellEl(row, q) {
+    return document.querySelector('#panelGrade .grade-cell[data-row="' + row + '"][data-q="' + q + '"]');
+  }
+  function markBtn(row, q, mark) {
+    return gradeCellEl(row, q).querySelector('.mark-cell[data-mark="' + mark + '"]');
+  }
+  function pressedMarks(row, q) {
+    return Array.prototype.map.call(gradeCellEl(row, q).querySelectorAll('.mark-cell[aria-pressed="true"]'), function (b) { return b.getAttribute('data-mark'); });
+  }
+  function gradeCalls() { return window.__gasCalls.filter(function (c) { return c.fn === 'updateStudentQuestionGrade'; }); }
+  function subOf(row) { return teacherState.submissions.filter(function (s) { return s.rowIndex === row; })[0]; }
+  function textsOf(sel) { return Array.prototype.map.call(document.querySelectorAll(sel), function (e) { return e.textContent.trim(); }); }
+  function enterOn(el) { el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); }
+
+  test('grade: orderQuestionsForGrading 은 보류 서술형이 먼저, countPendingForQuestion = 3', async function () {
+    await gradeLogin();
+    var order = orderQuestionsForGrading(teacherState.questions, teacherState.submissions);
+    assertEq(order[0], 6);
+    assertEq(order, [6, 1, 2, 3, 4, 5]);
+    assertEq(countPendingForQuestion(teacherState.submissions, 6), 3);
+    assertEq(countPendingForQuestion(teacherState.submissions, 1), 0);
+    // 그룹 규칙: 보류 남은 서술형 -> 다른 서술형 -> 나머지 (각 그룹 qNum 오름차순)
+    var qs = [{ qNum: 1, qType: '서술형' }, { qNum: 2, qType: '객관식' }, { qNum: 3, qType: '서술형' }, { qNum: 4, qType: '서술형' }];
+    var subs = [{ perQuestionMap: { 1: { status: 'O' }, 3: { status: '보류' }, 4: { status: '보류' } } }];
+    assertEq(orderQuestionsForGrading(qs, subs), [3, 4, 1, 2]);
+  }, { scenario: 'teacher' });
+
+  test('grade: 기본은 문항별 보기, 선택기·머리·표', async function () {
+    await gradeLogin();
+    assertEq(teacherState.gradeView, 'byQuestion');
+    assertEq(tById('gvByQuestion').getAttribute('aria-pressed'), 'true');
+    assertEq(tById('gvByStudent').getAttribute('aria-pressed'), 'false');
+    assertEq(teacherState.selectedQNum, 6);
+    var picks = document.querySelectorAll('#qPicker button[data-qnum]');
+    assertEq(Array.prototype.map.call(picks, function (b) { return b.getAttribute('data-qnum'); }), ['6', '1', '2', '3', '4', '5']);
+    assertEq(Array.prototype.map.call(picks, function (b) { return b.getAttribute('aria-pressed'); }), ['true', 'false', 'false', 'false', 'false', 'false']);
+    assertEq(Array.prototype.map.call(picks, function (b) { return b.classList.contains('q-pick--pending'); }), [true, false, false, false, false, false]);
+    var head = tById('gradeQHead').textContent;
+    assertTrue(head.indexOf('6번 · 서술형 · 10점 · 채점 기준') >= 0, head);
+    assertTrue(head.indexOf('우리 고장의 옛 모습이 달라진 까닭을 쓴다') >= 0, head);
+    assertEq(tById('gradeRemain').textContent, '3명 남음');
+    assertEq(tById('gradeAfterNote').hidden, true);
+    assertEq(textsOf('#panelGrade .grade-table thead th'), ['학생', '답', '채점']);
+    assertEq(textsOf('#panelGrade .grade-table tbody td.who'), ['1 김하늘', '2 이도윤', '3 박서연', '4 <b>"민\'수"</b>', '5 정우진']);
+    assertTrue(gradeCellEl(4, 6).closest('.table-wrap') !== null, '표는 .table-wrap 안');
+    // 자동 채점 문항
+    document.querySelector('#qPicker button[data-qnum="1"]').click();
+    assertEq(teacherState.selectedQNum, 1);
+    assertTrue(tById('gradeQHead').textContent.indexOf('자동 채점 문항') >= 0, tById('gradeQHead').textContent);
+    assertEq(document.querySelector('#qPicker button[data-qnum="1"]').getAttribute('aria-pressed'), 'true');
+  }, { scenario: 'teacher' });
+
+  test('grade: 빈 답은 (빈칸), 다빈칸 답은 쉼표로', async function () {
+    await gradeLogin();
+    var s = subOf(4);
+    s.answersByQ[6] = '(미입력)';
+    s.answersByQ[5] = '세종대왕,장영실';
+    teacherState.selectedQNum = 6;
+    renderGradePanel();
+    var cell = gradeCellEl(4, 6).closest('tr').querySelector('td.answer');
+    assertEq(cell.textContent.trim(), '(빈칸)');
+    assertTrue(cell.querySelector('.answer-empty') !== null);
+    document.querySelector('#qPicker button[data-qnum="5"]').click();
+    assertEq(gradeCellEl(4, 5).closest('tr').querySelector('td.answer').textContent.trim(), '세종대왕, 장영실');
+  }, { scenario: 'teacher' });
+
+  test('grade: parsePartialScore', function () {
+    var msg = '0에서 20점 사이 숫자를 써주세요';
+    ['', '-1', '21', 'abc', '  '].forEach(function (v) {
+      assertEq(parsePartialScore(v, 20), { ok: false, message: msg }, JSON.stringify(v));
+    });
+    assertEq(parsePartialScore('7.5', 20), { ok: true, value: 7.5 });
+    assertEq(parsePartialScore('20', 20), { ok: true, value: 20 });
+    assertEq(parsePartialScore('0', 20), { ok: true, value: 0 });
+    assertEq(parsePartialScore(' 3 ', 10), { ok: true, value: 3 });
+  }, { scenario: 'teacher' });
+
+  test('grade: buildGradePayload 는 그 행의 완료 상태를 그대로 보낸다', async function () {
+    await gradeLogin();
+    var done = subOf(2), wait = subOf(4);
+    var p = buildGradePayload(wait, 6, 'O', 10, 10);
+    assertEq(p, { authPassword: '1234', rowIndex: 4, rowKey: wait.rowKey, updatedQuestions: { 6: { status: 'O', earnedPoints: 10, maxPoints: 10 } }, forceComplete: false });
+    assertEq(buildGradePayload(done, 1, 'X', 0, 5).forceComplete, true);
+    assertEq('teacherComment' in p, false);
+  }, { scenario: 'teacher' });
+
+  test('grade: 위험 문자 이름과 답은 두 보기 모두 글자 그대로', async function () {
+    await gradeLogin();
+    var panel = tById('panelGrade');
+    document.querySelector('#qPicker button[data-qnum="1"]').click();
+    assertEq(panel.querySelectorAll('b, img').length, 0, '문항별');
+    var row = gradeCellEl(5, 1).closest('tr');
+    assertEq(row.querySelector('td.who').textContent.trim(), '4 <b>"민\'수"</b>');
+    assertEq(row.querySelector('td.answer').textContent.trim(), '<img src=x onerror=alert(1)>');
+    assertEq(row.querySelector('.score-input').getAttribute('aria-label'), '1번 <b>"민\'수"</b> 부분점수');
+    tById('gvByStudent').click();
+    assertEq(teacherState.gradeView, 'byStudent');
+    assertEq(panel.querySelectorAll('b, img').length, 0, '학생별 명렬표');
+    document.querySelector('#gradeRoster button[data-pick-row="5"]').click();
+    assertEq(panel.querySelectorAll('b, img').length, 0, '학생별 답안지');
+    assertEq(tById('gradeStudentName').textContent, '4번 <b>"민\'수"</b>');
+  }, { scenario: 'teacher' });
+
+  test('grade: 대기 학생의 마지막 보류를 매겨도 완료되지 않는다, 스크롤·포커스 유지', async function () {
+    if (FAIL_MODE) return;
+    await gradeLogin();
+    document.body.style.minHeight = '4000px';
+    window.scrollTo(0, 250);
+    var y0 = window.scrollY;
+    var btn = markBtn(4, 6, 'O');
+    btn.focus();
+    var n0 = gradeCalls().length;
+    btn.click();
+    assertEq(pressedMarks(4, 6), ['O'], '낙관적 표시');
+    await sleep(40);
+    var y1 = window.scrollY;
+    document.body.style.minHeight = '';
+    var calls = gradeCalls();
+    assertEq(calls.length - n0, 1);
+    var p = calls[calls.length - 1].payload;
+    assertEq(p.forceComplete, false);
+    assertEq('teacherComment' in p, false, '채점 칸 저장은 한 말씀을 보내지 않는다');
+    assertEq(p.updatedQuestions, { 6: { status: 'O', earnedPoints: 10, maxPoints: 10 } });
+    var s = subOf(4);
+    assertEq(s.isCompleted, false);
+    assertEq(s.totalScore, 45);
+    assertEq(s.perQuestionMap[6].status, 'O');
+    assertTrue(tById('tCounts').textContent.indexOf('채점 대기 3명') >= 0, tById('tCounts').textContent);
+    assertEq(tById('gradeRemain').textContent, '2명 남음');
+    assertTrue(y0 > 0, '먼저 스크롤 ' + y0);
+    assertEq(y1, y0);
+    assertTrue(btn.isConnected, '단추가 다시 그려지지 않는다');
+    assertEq(document.activeElement, btn);
+    assertEq(pressedMarks(4, 6), ['O']);
+  }, { scenario: 'teacher' });
+
+  test('grade: 보류를 모두 매기면 학생별로 가서 채점 끝을 누르라는 안내', async function () {
+    if (FAIL_MODE) return;
+    await gradeLogin();
+    [4, 5, 6].forEach(function (r) { markBtn(r, 6, 'X').click(); });
+    await sleep(60);
+    assertEq(tById('gradeRemain').textContent, '0명 남음');
+    assertEq(tById('gradeAfterNote').hidden, false);
+    assertEq(tById('gradeAfterNote').textContent, "학생별로에서 한 말씀을 쓰고 '채점 끝'을 누르면 학생에게 보여요.");
+    assertEq(document.querySelector('#qPicker button[data-qnum="6"]').classList.contains('q-pick--pending'), false);
+    assertTrue(tById('tCounts').textContent.indexOf('채점 대기 3명') >= 0);
+  }, { scenario: 'teacher' });
+
+  test('grade: 완료된 학생을 / 로 다시 매겨도 완료가 유지된다', async function () {
+    if (FAIL_MODE) return;
+    await gradeLogin();
+    document.querySelector('#qPicker button[data-qnum="1"]').click();
+    await gradeCell(2, 1, 'X');
+    var p = gradeCalls().pop().payload;
+    assertEq(p.forceComplete, true);
+    var s = subOf(2);
+    assertEq(s.isCompleted, true);
+    assertEq(s.totalScore, 40);
+    assertEq(pressedMarks(2, 1), ['X']);
+    assertTrue(tById('tCounts').textContent.indexOf('채점 대기 3명') >= 0);
+  }, { scenario: 'teacher' });
+
+  test('grade: ?fail 이면 칸이 원래대로, 오류 토스트, 다른 행은 그대로', async function () {
+    if (!FAIL_MODE) return;
+    await gradeLogin();
+    var before4 = pressedMarks(4, 6);
+    var b = markBtn(5, 6, 'O');
+    b.click();
+    assertEq(pressedMarks(5, 6), ['O']);
+    await sleep(40);
+    assertEq(b.getAttribute('aria-pressed'), 'false');
+    assertEq(pressedMarks(5, 6), []);
+    assertEq(pressedMarks(4, 6), before4);
+    assertTrue(tById('toast').classList.contains('error'), '오류 토스트');
+    assertEq(subOf(5).perQuestionMap[6].status, '보류');
+  }, { scenario: 'teacher' });
+
+  test('grade: 한 행만 실패하면 그 행만 되돌리고 다른 행은 저장된 대로', async function () {
+    if (FAIL_MODE) return;
+    await gradeLogin();
+    window.__stubFailQueue = { updateStudentQuestionGrade: [false, true] };
+    markBtn(4, 6, 'X').click();
+    markBtn(5, 6, 'O').click();
+    await sleep(60);
+    assertEq(pressedMarks(4, 6), ['X']);
+    assertEq(subOf(4).perQuestionMap[6].status, 'X');
+    assertEq(pressedMarks(5, 6), []);
+    assertEq(subOf(5).perQuestionMap[6].status, '보류');
+    assertTrue(tById('toast').classList.contains('error'));
+  }, { scenario: 'teacher' });
+
+  test('grade: 같은 칸을 빠르게 두 번 누르면 나중 것이 이긴다(차례대로 저장)', async function () {
+    if (FAIL_MODE) return;
+    await gradeLogin();
+    var n0 = gradeCalls().length;
+    function sentStatuses() { return gradeCalls().slice(n0).map(function (c) { return c.payload.updatedQuestions[6].status; }); }
+    // 보내기 전에 연달아 누르면 마지막 것만 보낸다
+    markBtn(6, 6, 'O').click();
+    markBtn(6, 6, '△').click();
+    markBtn(6, 6, 'X').click();
+    assertEq(pressedMarks(6, 6), ['X']);
+    await sleep(60);
+    assertEq(sentStatuses(), ['X']);
+    // 앞 저장이 서버에 가 있는 동안 누르면 그 응답을 기다렸다가 보낸다
+    n0 = gradeCalls().length;
+    markBtn(6, 6, 'O').click();
+    await null; await null;
+    assertEq(sentStatuses(), ['O'], '첫 저장은 바로 간다');
+    markBtn(6, 6, 'X').click();
+    assertEq(sentStatuses(), ['O'], '앞 응답 전에는 다음 것을 보내지 않는다');
+    assertEq(pressedMarks(6, 6), ['X']);
+    await sleep(60);
+    assertEq(sentStatuses(), ['O', 'X']);
+    assertEq(pressedMarks(6, 6), ['X']);
+    assertEq(subOf(6).perQuestionMap[6].status, 'X');
+    assertEq(subOf(6).totalScore, 35);
+    // 앞 것이 실패해도 더 새로 누른 것이 있으면 되돌리지 않는다
+    window.__stubFailQueue = { updateStudentQuestionGrade: [true, false] };
+    markBtn(5, 6, 'O').click();
+    await null; await null;
+    markBtn(5, 6, 'X').click();
+    await sleep(60);
+    assertEq(pressedMarks(5, 6), ['X']);
+    assertEq(subOf(5).perQuestionMap[6].status, 'X');
+  }, { scenario: 'teacher' });
+
+  test('grade: △ 는 점수 칸에 절반을 넣고 Enter 로 저장, 잘못된 점수는 인라인 오류', async function () {
+    if (FAIL_MODE) return;
+    await gradeLogin();
+    var cell = gradeCellEl(4, 6);
+    var input = cell.querySelector('.score-input');
+    assertEq(input.getAttribute('aria-label'), '6번 박서연 부분점수');
+    assertEq(input.getAttribute('placeholder'), '점');
+    assertEq(input.getAttribute('step'), '0.1');
+    var n0 = gradeCalls().length;
+    markBtn(4, 6, '△').click();
+    assertEq(document.activeElement, input);
+    assertEq(input.value, '5');
+    assertEq(gradeCalls().length - n0, 0, '△ 만 눌러서는 저장하지 않는다');
+    input.value = '7.5';
+    enterOn(input);
+    await sleep(40);
+    var p = gradeCalls().pop().payload;
+    assertEq(p.updatedQuestions[6], { status: '△', earnedPoints: 7.5, maxPoints: 10 });
+    assertEq(pressedMarks(4, 6), ['△']);
+    assertEq(subOf(4).totalScore, 42.5);
+    var n1 = gradeCalls().length;
+    input.value = '21';
+    enterOn(input);
+    await sleep(20);
+    var err = cell.querySelector('.inline-error');
+    assertEq(err.hidden, false);
+    assertEq(err.textContent, '0에서 10점 사이 숫자를 써주세요');
+    assertEq(gradeCalls().length, n1, '잘못된 점수는 저장하지 않는다');
+    input.value = '10';
+    input.dispatchEvent(new Event('blur'));
+    await sleep(40);
+    assertEq(gradeCalls().pop().payload.updatedQuestions[6].status, 'O');
+    assertEq(err.hidden, true);
+    assertEq(pressedMarks(4, 6), ['O']);
+    // 바뀐 것이 없으면 blur 에 다시 저장하지 않는다
+    var n2 = gradeCalls().length;
+    input.dispatchEvent(new Event('blur'));
+    await sleep(20);
+    assertEq(gradeCalls().length, n2);
+  }, { scenario: 'teacher' });
+
+  test('grade: 학생별 보기 명렬표(번호순)와 답안지 표', async function () {
+    await gradeLogin();
+    tById('gvByStudent').click();
+    assertEq(tById('gvByStudent').getAttribute('aria-pressed'), 'true');
+    assertEq(textsOf('#gradeRoster thead th'), ['번호', '이름', '점수']);
+    assertEq(textsOf('#gradeRoster tbody td.num'), ['1', '2', '3', '4', '5']);
+    assertEq(textsOf('#gradeRoster tbody td.score'), ['45', '35', '대기', '대기', '대기']);
+    // 처음 고르는 학생 = 아직 대기인 첫 학생
+    assertEq(teacherState.selectedRowIndex, 4);
+    assertEq(document.querySelector('#gradeRoster button[data-pick-row="4"]').getAttribute('aria-pressed'), 'true');
+    assertEq(tById('gradeStudentName').textContent, '3번 박서연');
+    assertEq(textsOf('#gradeSheet thead th'), ['번호', '학생 답', '정답', '채점']);
+    assertEq(document.querySelectorAll('#gradeSheet tbody tr').length, 6);
+    assertEq(tById('commentInput').tagName, 'INPUT');
+    assertTrue(document.querySelector('label[for="commentInput"]') !== null, '한 말씀 라벨');
+    assertEq(tById('prevStudentBtn').textContent, '이전 학생');
+    assertEq(tById('finishStudentBtn').textContent, '채점 끝, 다음 학생');
+    // 학생별 보기에서 채점하면 머리 총점과 명렬표 점수만 갱신
+    if (FAIL_MODE) return;
+    var total = tById('gradeStudentTotal');
+    assertEq(total.textContent, '35점');
+    markBtn(4, 6, 'O').click();
+    await sleep(40);
+    assertEq(total.textContent, '45점');
+    assertTrue(total.isConnected);
+    assertEq(document.querySelector('#gradeRoster tr[data-row="4"] td.score').textContent.trim(), '대기');
+  }, { scenario: 'teacher' });
+
+  test('grade: 보류가 남았는데 채점 끝(auto)은 서버 호출 없이 안내와 버튼 2개', async function () {
+    await gradeLogin();
+    tById('gvByStudent').click();
+    document.querySelector('#gradeRoster button[data-pick-row="5"]').click();
+    var n0 = window.__gasCalls.length;
+    await finishStudent(5, 'auto');
+    assertEq(window.__gasCalls.length, n0, '서버 호출 없음');
+    var area = tById('finishArea');
+    assertEq(area.querySelector('.inline-note').textContent.indexOf('아직 안 매긴 서술형이 있어요(6번). 완료하면 0점으로 보여요.') >= 0, true, area.textContent);
+    assertEq(textsOf('#finishArea button'), ['한 말씀만 저장', '그래도 완료']);
+    assertEq(teacherState.selectedRowIndex, 5);
+  }, { scenario: 'teacher' });
+
+  test('grade: 한 말씀만 저장은 forceComplete 를 보내지 않고 다음 학생으로', async function () {
+    if (FAIL_MODE) return;
+    await gradeLogin();
+    tById('gvByStudent').click();
+    document.querySelector('#gradeRoster button[data-pick-row="5"]').click();
+    tById('commentInput').value = '조금만 더 써 봐요.';
+    tById('finishStudentBtn').click();
+    await sleep(20);
+    var n0 = gradeCalls().length;
+    document.querySelector('#finishArea button[data-finish="commentOnly"]').click();
+    await sleep(40);
+    var calls = gradeCalls();
+    assertEq(calls.length - n0, 1);
+    var p = calls[calls.length - 1].payload;
+    assertEq('forceComplete' in p, false);
+    assertEq(p.teacherComment, '조금만 더 써 봐요.');
+    assertEq(p.rowIndex, 5);
+    assertEq(subOf(5).isCompleted, false);
+    assertEq(subOf(5).teacherComment, '조금만 더 써 봐요.');
+    assertEq(tById('toast').textContent, '한 말씀을 저장했어요');
+    assertEq(teacherState.selectedRowIndex, 6);
+    assertEq(tById('gradeStudentName').textContent, '5번 정우진');
+    assertEq(tById('commentInput').value, '');
+  }, { scenario: 'teacher' });
+
+  test('grade: 그래도 완료는 forceComplete true, 마지막 학생이면 멈춘다', async function () {
+    if (FAIL_MODE) return;
+    await gradeLogin();
+    tById('gvByStudent').click();
+    document.querySelector('#gradeRoster button[data-pick-row="6"]').click();
+    await finishStudent(6, 'auto');
+    document.querySelector('#finishArea button[data-finish="complete"]').click();
+    await sleep(40);
+    var p = gradeCalls().pop().payload;
+    assertEq(p.forceComplete, true);
+    assertEq(p.teacherComment, '');
+    assertEq(subOf(6).isCompleted, true);
+    assertTrue(tById('tCounts').textContent.indexOf('채점 대기 2명') >= 0, tById('tCounts').textContent);
+    assertEq(document.querySelector('#gradeRoster tr[data-row="6"] td.score').textContent.trim(), '35');
+    assertEq(tById('toast').textContent, '채점을 끝냈어요. 마지막 학생이에요');
+    assertEq(teacherState.selectedRowIndex, 6);
+  }, { scenario: 'teacher' });
+
+  test('grade: 보류가 없으면 채점 끝은 바로 완료하고 다음 학생, 이전 학생은 뒤로', async function () {
+    if (FAIL_MODE) return;
+    await gradeLogin();
+    tById('gvByStudent').click();
+    document.querySelector('#gradeRoster button[data-pick-row="4"]').click();
+    markBtn(4, 6, 'O').click();
+    tById('commentInput').value = '잘 썼어요.';
+    tById('finishStudentBtn').click(); // 앞 저장이 끝난 뒤에 보낸다
+    await sleep(60);
+    var calls = gradeCalls();
+    var last = calls[calls.length - 1].payload, prev = calls[calls.length - 2].payload;
+    assertEq(prev.updatedQuestions[6].status, 'O');
+    assertEq(last.forceComplete, true);
+    assertEq(last.teacherComment, '잘 썼어요.');
+    assertEq(subOf(4).isCompleted, true);
+    assertEq(subOf(4).totalScore, 45);
+    assertEq(tById('toast').textContent, '채점을 끝냈어요');
+    assertEq(teacherState.selectedRowIndex, 5);
+    tById('prevStudentBtn').click();
+    assertEq(teacherState.selectedRowIndex, 4);
+    assertEq(tById('commentInput').value, '잘 썼어요.', '저장된 한 말씀을 다시 보여준다');
+    document.querySelector('#gradeRoster button[data-pick-row="2"]').click();
+    document.querySelector('#gradeRoster button[data-pick-row="2"]').click();
+    tById('prevStudentBtn').click();
+    assertEq(teacherState.selectedRowIndex, 2);
+    tById('prevStudentBtn').click();
+    assertEq(teacherState.selectedRowIndex, 2, '첫 학생에서 멈춘다');
+  }, { scenario: 'teacher' });
+
+  test('grade: 채점 중 선생님 화면을 나가면 늦은 응답은 무시', async function () {
+    if (FAIL_MODE) return;
+    await gradeLogin();
+    window.__stubDelay = 20;
+    tById('toast').textContent = '';
+    markBtn(4, 6, 'O').click();
+    tById('toStudentBtn').click();
+    await sleep(60);
+    window.__stubDelay = 0;
+    assertEq(teacherState.submissions, []);
+    assertEq(tById('toast').textContent, '');
+    assertEq(tById('panelGrade').innerHTML, '');
+  }, { scenario: 'teacher' });
+
+  test('grade: 900px 미만이면 학생별 보기가 1단, 가로 스크롤 없음', async function () {
+    await gradeLogin();
+    assertTrue(document.documentElement.scrollWidth <= window.innerWidth, '문항별 ' + document.documentElement.scrollWidth + ' > ' + window.innerWidth);
+    tById('gvByStudent').click();
+    var cols = getComputedStyle(document.querySelector('.grade-split')).gridTemplateColumns.split(' ').length;
+    assertEq(cols, window.innerWidth < 900 ? 1 : 2, 'width ' + window.innerWidth);
+    assertTrue(document.documentElement.scrollWidth <= window.innerWidth, '학생별 ' + document.documentElement.scrollWidth + ' > ' + window.innerWidth);
+    assertTrue(document.querySelector('#gradeSheet').closest('.table-wrap') !== null);
   }, { scenario: 'teacher' });
 
   // ===== 실행 =====

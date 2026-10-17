@@ -194,14 +194,531 @@
   }
 
   // ----- 패널 (다음 작업에서 채움) -----
-  function renderGradePanel() {
-    tEl('panelGrade').innerHTML = '<p class="t-placeholder">채점 화면을 준비하고 있어요.</p>';
-  }
   function renderResultsPanel() {
     tEl('panelResults').innerHTML = '<p class="t-placeholder">결과 보기 화면을 준비하고 있어요.</p>';
   }
   function renderSetupPanel() {
     tEl('panelSetup').innerHTML = '<p class="t-placeholder">정답과 설정 화면을 준비하고 있어요.</p>';
+  }
+
+  // ----- 채점 탭 -----
+  // 채점 칸 글자: ○ = 만점, △ = 부분 점수, / = 0점
+  var MARK_ORDER = ['O', '△', 'X'];
+  var MARK_GLYPH = { 'O': '○', '△': '△', 'X': '/' };
+  var MARK_NAME = { 'O': '맞음', '△': '부분 점수', 'X': '틀림' };
+
+  // 칸별 상태 'row|q' -> {seq, done, shown}: 마지막으로 누른 것(shown)이 저장될 때까지 그것을 보여준다
+  var gradeCells = {};
+  // 행별 저장 줄: 한 학생의 저장은 누른 차례대로 하나씩 보낸다 (서버에 늦게 닿은 옛 값이 새 값을 덮지 않게)
+  var gradeRows = {};
+  var commentDrafts = {};
+  var gradeBookSession = -1;
+  function gradeBook() {
+    if (gradeBookSession !== teacherSession) {
+      gradeCells = {}; gradeRows = {}; commentDrafts = {};
+      gradeBookSession = teacherSession;
+    }
+  }
+  function rowBook(rowIndex) {
+    return gradeRows[rowIndex] || (gradeRows[rowIndex] = { chain: Promise.resolve(), finishing: false });
+  }
+  function runInRowQueue(rowIndex, job) {
+    var r = rowBook(rowIndex);
+    var p = r.chain.then(job);
+    r.chain = p.catch(function () {});
+    return p;
+  }
+
+  function findSub(rowIndex) {
+    var n = Number(rowIndex);
+    return teacherState.submissions.filter(function (s) { return Number(s.rowIndex) === n; })[0] || null;
+  }
+  function questionOf(qNum) {
+    var n = Number(qNum);
+    return teacherState.questions.filter(function (q) { return Number(q.qNum) === n; })[0] || null;
+  }
+  function fmtScore(v) { return String(Math.round((Number(v) || 0) * 10) / 10); }
+
+  // 그 문항이 '보류'인 제출 수
+  function countPendingForQuestion(submissions, qNum) {
+    return (submissions || []).filter(function (s) {
+      var rec = s.perQuestionMap && s.perQuestionMap[qNum];
+      return !!rec && rec.status === '보류';
+    }).length;
+  }
+
+  // 채점 순서: 보류가 남은 서술형 -> 다른 서술형 -> 나머지 (각각 번호순)
+  function orderQuestionsForGrading(questions, submissions) {
+    var groups = [[], [], []];
+    (questions || []).forEach(function (q) {
+      var g = q.qType !== '서술형' ? 2 : (countPendingForQuestion(submissions, q.qNum) > 0 ? 0 : 1);
+      groups[g].push(Number(q.qNum));
+    });
+    var asc = function (a, b) { return a - b; };
+    return groups[0].sort(asc).concat(groups[1].sort(asc), groups[2].sort(asc));
+  }
+
+  // 채점 칸 저장: 완료 상태는 그 행의 지금 값을 그대로 보낸다 (완료는 '채점 끝'에서만 바뀐다)
+  function buildGradePayload(sub, qNum, status, earned, max) {
+    var updated = {};
+    updated[qNum] = { status: status, earnedPoints: earned, maxPoints: max };
+    return {
+      authPassword: teacherState.pw, rowIndex: sub.rowIndex, rowKey: sub.rowKey,
+      updatedQuestions: updated, forceComplete: sub.isCompleted === true
+    };
+  }
+
+  function parsePartialScore(input, max) {
+    var raw = String(input === null || input === undefined ? '' : input).trim();
+    var bad = { ok: false, message: '0에서 ' + max + '점 사이 숫자를 써주세요' };
+    if (!/^(\d+(\.\d+)?|\.\d+)$/.test(raw)) return bad;
+    var v = Number(raw);
+    if (!isFinite(v) || v < 0 || v > max) return bad;
+    return { ok: true, value: v };
+  }
+  function statusForScore(v, max) { return v >= max ? 'O' : (v <= 0 ? 'X' : '△'); }
+
+  // 명렬표 순서: 번호(숫자) 오름차순, 같으면 이름순
+  function rosterOrder(subs) {
+    return (subs || []).slice().sort(function (a, b) {
+      var na = parseFloat(a.studentNumber), nb = parseFloat(b.studentNumber);
+      var fa = isFinite(na), fb = isFinite(nb);
+      if (fa && fb && na !== nb) return na - nb;
+      if (fa !== fb) return fa ? -1 : 1;
+      if (!fa) {
+        var c = String(a.studentNumber).localeCompare(String(b.studentNumber), 'ko');
+        if (c) return c;
+      }
+      return String(a.studentName).localeCompare(String(b.studentName), 'ko');
+    });
+  }
+  function neighborRow(rowIndex, step) {
+    var list = rosterOrder(teacherState.submissions);
+    for (var i = 0; i < list.length; i++) {
+      if (Number(list[i].rowIndex) === Number(rowIndex)) return list[i + step] || null;
+    }
+    return null;
+  }
+
+  // 화면에 보일 채점 값: 저장 중이면 마지막으로 누른 값, 아니면 저장된 값
+  function effectiveMark(rowIndex, qNum) {
+    var c = gradeCells[rowIndex + '|' + qNum];
+    if (c && !c.done) return c.shown;
+    var sub = findSub(rowIndex);
+    var rec = sub && sub.perQuestionMap ? sub.perQuestionMap[qNum] : null;
+    return rec ? { status: rec.status, earned: Number(rec.earnedPoints) || 0 } : null;
+  }
+  function pendingQNums(sub) {
+    return teacherState.questions.map(function (q) { return Number(q.qNum); }).sort(function (a, b) { return a - b; })
+      .filter(function (n) { var m = effectiveMark(sub.rowIndex, n); return !!m && m.status === '보류'; });
+  }
+
+  function answerHtml(sub, q) {
+    var a = sub.answersByQ ? sub.answersByQ[q.qNum] : '';
+    var str = a === undefined || a === null ? '' : String(a);
+    if (str.trim() === '' || str.trim() === '(미입력)') return '<span class="answer-empty">(빈칸)</span>';
+    if (q.qType !== '서술형') str = str.split(',').map(function (x) { return x.trim(); }).join(', ');
+    return escapeHtml(str);
+  }
+
+  function markCellHtml(sub, q) {
+    var eff = effectiveMark(sub.rowIndex, q.qNum);
+    var st = eff ? eff.status : '';
+    var max = Number(q.points) || 0;
+    var label = q.qNum + '번 ' + sub.studentName;
+    var btn = function (m) {
+      return '<button type="button" class="mark-cell" data-mark="' + m + '" aria-label="' + MARK_NAME[m] + '" aria-pressed="' + (st === m) + '">' + MARK_GLYPH[m] + '</button>';
+    };
+    return '<div class="grade-cell" data-row="' + Number(sub.rowIndex) + '" data-q="' + Number(q.qNum) + '">' +
+      '<span class="mark-cells" role="group" aria-label="' + escapeHtml(label + ' 채점') + '">' +
+      btn('O') + btn('△') +
+      '<input type="number" class="score-input" step="0.1" min="0" max="' + max + '" inputmode="decimal" placeholder="점"' +
+      ' aria-label="' + escapeHtml(label + ' 부분점수') + '" value="' + (st === '△' ? fmtScore(eff.earned) : '') + '">' +
+      btn('X') + '</span>' +
+      '<p class="inline-error score-error" role="alert" hidden></p></div>';
+  }
+
+  function viewSwitchHtml(byQ) {
+    return '<div class="grade-views" role="group" aria-label="채점 보기">' +
+      '<button type="button" class="grade-view-btn" id="gvByQuestion" data-gview="byQuestion" aria-pressed="' + byQ + '">문항별로 모아서</button>' +
+      '<button type="button" class="grade-view-btn" id="gvByStudent" data-gview="byStudent" aria-pressed="' + !byQ + '">학생별로</button>' +
+      '</div>';
+  }
+
+  function renderGradePanel() {
+    gradeBook();
+    var byQ = teacherState.gradeView !== 'byStudent';
+    var html = viewSwitchHtml(byQ);
+    if (!teacherState.questions.length) html += '<p class="t-placeholder">정답표에 문항이 없어요. 정답과 설정에서 문항을 넣어 주세요.</p>';
+    else if (!teacherState.submissions.length) html += '<p class="t-placeholder">아직 낸 답안지가 없어요.</p>';
+    else html += byQ ? questionViewHtml() : studentViewHtml();
+    tEl('panelGrade').innerHTML = html;
+  }
+
+  // 화면 일부를 다시 그린 뒤 같은 단추로 포커스를 돌려놓는다
+  function rerenderGradeKeepingFocus(selector) {
+    var x = window.scrollX, y = window.scrollY;
+    renderGradePanel();
+    window.scrollTo(x, y);
+    var el = selector ? tEl('panelGrade').querySelector(selector) : null;
+    if (el) el.focus({ preventScroll: true });
+  }
+
+  // --- 문항별로 모아서 ---
+  function pickInner(n, pending) {
+    return String(n) + (pending ? '<span class="visually-hidden"> 남은 채점 있음</span>' : '');
+  }
+  function questionHeadInfo(qNum) {
+    var pending = countPendingForQuestion(teacherState.submissions, qNum);
+    return { pending: pending, showNote: pending === 0 && countWaiting(teacherState.submissions) > 0 };
+  }
+
+  function questionViewHtml() {
+    var subs = teacherState.submissions;
+    var order = orderQuestionsForGrading(teacherState.questions, subs);
+    if (order.indexOf(Number(teacherState.selectedQNum)) < 0) teacherState.selectedQNum = order[0];
+    var qNum = Number(teacherState.selectedQNum);
+    var q = questionOf(qNum);
+    var info = questionHeadInfo(qNum);
+    var picker = '<div class="q-picker" id="qPicker" role="group" aria-label="문항 고르기">' + order.map(function (n) {
+      var p = countPendingForQuestion(subs, n) > 0;
+      return '<button type="button" class="q-pick' + (p ? ' q-pick--pending' : '') + '" data-qnum="' + n + '" aria-pressed="' + (n === qNum) + '">' + pickInner(n, p) + '</button>';
+    }).join('') + '</div>';
+    var head = '<div class="grade-qbar">' +
+      '<div class="grade-qhead" id="gradeQHead">' +
+      '<h2 class="grade-qtitle">' + qNum + '번 · ' + escapeHtml(q.qType) + ' · ' + fmtScore(q.points) + '점</h2>' +
+      '<span class="grade-criteria"> · 채점 기준: ' + escapeHtml(q.rawAnswerStr) + '</span>' +
+      (q.qType !== '서술형' ? '<span class="grade-auto">자동 채점 문항</span>' : '') +
+      '</div>' +
+      '<span class="grade-remain" id="gradeRemain">' + info.pending + '명 남음</span></div>' +
+      '<p class="inline-note grade-after-note" id="gradeAfterNote"' + (info.showNote ? '' : ' hidden') + '>' +
+      "학생별로에서 한 말씀을 쓰고 '채점 끝'을 누르면 학생에게 보여요.</p>";
+    var rows = rosterOrder(subs).map(function (s) {
+      var eff = effectiveMark(s.rowIndex, qNum);
+      return '<tr data-row="' + Number(s.rowIndex) + '"' + (eff && eff.status === '보류' ? ' class="is-pending"' : '') + '>' +
+        '<td class="who">' + escapeHtml(s.studentNumber) + ' ' + escapeHtml(s.studentName) + '</td>' +
+        '<td class="answer">' + answerHtml(s, q) + '</td>' +
+        '<td class="mark-td">' + markCellHtml(s, q) + '</td></tr>';
+    }).join('');
+    return picker + head +
+      '<div class="table-wrap"><table class="sheet-table grade-table"><thead><tr>' +
+      '<th class="who-col">학생</th><th>답</th><th class="mark-col">채점</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+
+  // --- 학생별로 ---
+  function scoreCellHtml(sub) {
+    return sub.isCompleted ? fmtScore(sub.totalScore) : '<span class="wait-tag">대기</span>';
+  }
+  function finishButtonsHtml() {
+    return '<div class="finish-buttons">' +
+      '<button type="button" class="btn-quiet" id="prevStudentBtn">이전 학생</button>' +
+      '<button type="button" class="btn-ink" id="finishStudentBtn">채점 끝, 다음 학생</button></div>';
+  }
+  function finishWarnText(pending) {
+    return '아직 안 매긴 서술형이 있어요(' + pending.map(function (n) { return n + '번'; }).join(', ') + '). 완료하면 0점으로 보여요.';
+  }
+
+  function studentViewHtml() {
+    var list = rosterOrder(teacherState.submissions);
+    var sel = findSub(teacherState.selectedRowIndex);
+    if (!sel) {
+      sel = list.filter(function (s) { return !s.isCompleted; })[0] || list[0];
+      teacherState.selectedRowIndex = sel.rowIndex;
+    }
+    var roster = list.map(function (s) {
+      var on = s === sel;
+      return '<tr data-row="' + Number(s.rowIndex) + '"' + (on ? ' class="is-selected"' : '') + '>' +
+        '<td class="num">' + escapeHtml(s.studentNumber) + '</td>' +
+        '<td class="name"><button type="button" class="roster-pick" data-pick-row="' + Number(s.rowIndex) + '" aria-pressed="' + on + '">' + escapeHtml(s.studentName) + '</button></td>' +
+        '<td class="score">' + scoreCellHtml(s) + '</td></tr>';
+    }).join('');
+    var qs = teacherState.questions.slice().sort(function (a, b) { return a.qNum - b.qNum; });
+    var sheet = qs.map(function (q) {
+      var eff = effectiveMark(sel.rowIndex, q.qNum);
+      var essay = q.qType === '서술형';
+      return '<tr data-q="' + Number(q.qNum) + '"' + (eff && eff.status === '보류' ? ' class="is-pending"' : '') + '>' +
+        '<td class="num">' + Number(q.qNum) + '</td>' +
+        '<td class="answer">' + answerHtml(sel, q) + '</td>' +
+        '<td class="correct' + (essay ? ' criteria' : '') + '">' + escapeHtml(q.rawAnswerStr) + '</td>' +
+        '<td class="mark-td">' + markCellHtml(sel, q) + '</td></tr>';
+    }).join('');
+    var draft = commentDrafts[sel.rowIndex];
+    var comment = draft !== undefined ? draft : (sel.teacherComment || '');
+    return '<div class="grade-split">' +
+      '<div class="table-wrap grade-roster-wrap"><table class="sheet-table roster-table" id="gradeRoster" aria-label="명렬표"><thead><tr>' +
+      '<th>번호</th><th>이름</th><th>점수</th></tr></thead><tbody>' + roster + '</tbody></table></div>' +
+      '<div class="grade-student">' +
+      '<div class="grade-student-head"><h2 id="gradeStudentName" tabindex="-1">' + escapeHtml(sel.studentNumber) + '번 ' + escapeHtml(sel.studentName) + '</h2>' +
+      '<span class="red-pen grade-student-total" id="gradeStudentTotal">' + fmtScore(sel.totalScore) + '점</span></div>' +
+      '<div class="table-wrap"><table class="sheet-table" id="gradeSheet"><thead><tr>' +
+      '<th class="num-col">번호</th><th>학생 답</th><th class="correct-col">정답</th><th class="mark-col">채점</th></tr></thead><tbody>' + sheet + '</tbody></table></div>' +
+      '<label for="commentInput" class="visually-hidden">한 말씀</label>' +
+      '<input type="text" id="commentInput" class="comment-input" maxlength="300" placeholder="한 말씀을 써 주세요" value="' + escapeHtml(comment) + '">' +
+      '<div class="finish-area" id="finishArea">' + finishButtonsHtml() + '</div>' +
+      '</div></div>';
+  }
+
+  function selectStudent(rowIndex, focusSelector) {
+    teacherState.selectedRowIndex = Number(rowIndex);
+    rerenderGradeKeepingFocus(focusSelector || null);
+    if (!focusSelector && tEl('gradeStudentName')) tEl('gradeStudentName').focus();
+  }
+
+  // --- 부분 갱신 (채점 저장 뒤 전체 재렌더 없이) ---
+  function paintCell(rowIndex, qNum, force) {
+    var eff = effectiveMark(rowIndex, qNum);
+    var st = eff ? eff.status : '';
+    var cells = tEl('panelGrade').querySelectorAll('.grade-cell[data-row="' + Number(rowIndex) + '"][data-q="' + Number(qNum) + '"]');
+    Array.prototype.forEach.call(cells, function (cell) {
+      Array.prototype.forEach.call(cell.querySelectorAll('.mark-cell'), function (b) {
+        b.setAttribute('aria-pressed', b.getAttribute('data-mark') === st ? 'true' : 'false');
+      });
+      var input = cell.querySelector('.score-input');
+      // 쓰고 있는 점수 칸은 덮지 않는다 (되돌릴 때만 덮는다)
+      if (force || document.activeElement !== input) {
+        input.value = st === '△' ? fmtScore(eff.earned) : '';
+        delete input.dataset.armed;
+      }
+      var tr = cell.closest('tr');
+      if (tr) tr.classList.toggle('is-pending', st === '보류');
+    });
+  }
+
+  function paintRowSummary(rowIndex) {
+    renderTopBar();
+    var sub = findSub(rowIndex);
+    if (!sub) return;
+    var remain = tEl('gradeRemain');
+    if (remain) {
+      var info = questionHeadInfo(teacherState.selectedQNum);
+      remain.textContent = info.pending + '명 남음';
+      tEl('gradeAfterNote').hidden = !info.showNote;
+      Array.prototype.forEach.call(document.querySelectorAll('#qPicker button[data-qnum]'), function (b) {
+        var n = Number(b.getAttribute('data-qnum'));
+        var p = countPendingForQuestion(teacherState.submissions, n) > 0;
+        if (b.classList.contains('q-pick--pending') !== p) {
+          b.classList.toggle('q-pick--pending', p);
+          b.innerHTML = pickInner(n, p);
+        }
+      });
+    }
+    var scoreTd = document.querySelector('#gradeRoster tr[data-row="' + Number(rowIndex) + '"] td.score');
+    if (scoreTd) scoreTd.innerHTML = scoreCellHtml(sub);
+    if (Number(teacherState.selectedRowIndex) === Number(rowIndex) && tEl('gradeStudentTotal')) {
+      tEl('gradeStudentTotal').textContent = fmtScore(sub.totalScore) + '점';
+      refreshFinishWarning(sub);
+    }
+  }
+
+  // 경고가 떠 있는데 남은 서술형을 다 매겼으면 원래 단추로 돌린다
+  function refreshFinishWarning(sub) {
+    var area = tEl('finishArea');
+    if (!area || !area.querySelector('[data-finish]')) return;
+    var pending = pendingQNums(sub);
+    if (!pending.length) area.innerHTML = finishButtonsHtml();
+    else area.querySelector('.finish-warn').textContent = finishWarnText(pending);
+  }
+
+  function showScoreError(cell, message) {
+    var el = cell.querySelector('.score-error');
+    el.textContent = message;
+    el.hidden = false;
+  }
+  function clearScoreError(rowIndex, qNum) {
+    var cells = tEl('panelGrade').querySelectorAll('.grade-cell[data-row="' + Number(rowIndex) + '"][data-q="' + Number(qNum) + '"] .score-error');
+    Array.prototype.forEach.call(cells, function (el) { el.hidden = true; el.textContent = ''; });
+  }
+
+  // 채점 칸 하나 저장: 바로 표시 -> 서버 저장 -> 성공이면 그 행 데이터만 갱신, 실패면 저장된 값으로 되돌림
+  function gradeCell(rowIndex, qNum, status, earned) {
+    gradeBook();
+    var sub = findSub(rowIndex), q = questionOf(qNum);
+    if (!sub || !q) return Promise.resolve();
+    var max = Number(q.points) || 0;
+    if (status === 'O') earned = max;
+    else if (status === 'X') earned = 0;
+    else if (earned === undefined || earned === null) earned = Math.round(max / 2);
+    var key = rowIndex + '|' + qNum;
+    var c = gradeCells[key] || (gradeCells[key] = { seq: 0, done: true, shown: null });
+    var seq = ++c.seq;
+    c.done = false;
+    c.shown = { status: status, earned: earned };
+    paintCell(rowIndex, qNum);
+    clearScoreError(rowIndex, qNum);
+    var session = teacherSession, rowKey = sub.rowKey;
+    return runInRowQueue(rowIndex, async function () {
+      if (session !== teacherSession) return;
+      if (seq !== c.seq) return; // 그 뒤에 같은 칸을 또 눌렀다: 마지막 것만 보낸다
+      var s = findSub(rowIndex);
+      if (!s || s.rowKey !== rowKey) {
+        c.done = true;
+        paintCell(rowIndex, qNum, true);
+        showToast('제출 기록이 바뀌었어요. 새로고침한 뒤 다시 매겨 주세요.', 'error');
+        return;
+      }
+      var payload = buildGradePayload(s, qNum, status, earned, max);
+      var res;
+      try {
+        res = await serverCall('updateStudentQuestionGrade', payload);
+      } catch (e) {
+        res = { success: false, message: '연결을 확인해 주세요.' };
+      }
+      if (session !== teacherSession) return; // 그 사이 선생님 화면을 나갔다
+      var latest = seq === c.seq;
+      var cur = findSub(rowIndex);
+      if (res && res.success && cur && cur.rowKey === rowKey) {
+        cur.perQuestionMap = cur.perQuestionMap || {};
+        cur.perQuestionMap[qNum] = payload.updatedQuestions[qNum];
+        if (typeof res.newTotalScore === 'number') cur.totalScore = res.newTotalScore;
+        cur.isCompleted = res.isCompleted === true;
+        if (latest) c.done = true;
+        paintCell(rowIndex, qNum);
+        paintRowSummary(rowIndex);
+        return;
+      }
+      if (latest) {
+        c.done = true;
+        paintCell(rowIndex, qNum, true);
+      }
+      showToast('채점을 저장하지 못했어요. ' + ((res && res.message) || '다시 눌러 주세요.'), 'error');
+    });
+  }
+
+  function onMarkClick(btn) {
+    var cell = btn.closest('.grade-cell');
+    var row = Number(cell.getAttribute('data-row')), qNum = Number(cell.getAttribute('data-q'));
+    var mark = btn.getAttribute('data-mark');
+    var input = cell.querySelector('.score-input');
+    if (mark === '△') {
+      // 점수는 칸에 쓰고 Enter/칸 밖으로 나가면 저장
+      var q = questionOf(qNum);
+      if (input.value.trim() === '') input.value = String(Math.round((Number(q && q.points) || 0) / 2));
+      input.dataset.armed = '1';
+      input.focus();
+      input.select();
+      return;
+    }
+    delete input.dataset.armed;
+    gradeCell(row, qNum, mark);
+  }
+
+  function commitScore(input) {
+    var cell = input.closest('.grade-cell');
+    if (!cell) return;
+    var row = Number(cell.getAttribute('data-row')), qNum = Number(cell.getAttribute('data-q'));
+    var q = questionOf(qNum);
+    if (!q) return;
+    if (input.value.trim() === '' && input.dataset.armed !== '1') { clearScoreError(row, qNum); return; }
+    var max = Number(q.points) || 0;
+    var parsed = parsePartialScore(input.value, max);
+    if (!parsed.ok) { showScoreError(cell, parsed.message); return; }
+    delete input.dataset.armed;
+    clearScoreError(row, qNum);
+    var st = statusForScore(parsed.value, max);
+    var eff = effectiveMark(row, qNum);
+    if (eff && eff.status === st && Number(eff.earned) === parsed.value) return; // 바뀐 것 없음
+    gradeCell(row, qNum, st, parsed.value);
+  }
+
+  function showFinishWarning(pending) {
+    var area = tEl('finishArea');
+    if (!area) return;
+    area.innerHTML = '<p class="inline-note finish-warn" role="alert">' + escapeHtml(finishWarnText(pending)) + '</p>' +
+      '<div class="finish-buttons">' +
+      '<button type="button" class="btn-quiet" data-finish="commentOnly">한 말씀만 저장</button>' +
+      '<button type="button" class="btn-ink" data-finish="complete">그래도 완료</button></div>';
+    area.querySelector('[data-finish="commentOnly"]').focus();
+  }
+
+  // 채점 끝: auto 는 보류가 있으면 묻고, complete 는 완료로, commentOnly 는 한 말씀만 저장 (완료 상태는 서버 규칙대로)
+  async function finishStudent(rowIndex, mode) {
+    gradeBook();
+    var sub = findSub(rowIndex);
+    if (!sub) return;
+    if (mode === 'auto') {
+      var pending = pendingQNums(sub);
+      if (pending.length) { showFinishWarning(pending); return; }
+      mode = 'complete';
+    }
+    var r = rowBook(rowIndex);
+    if (r.finishing) return; // 저장 중에 또 눌러도 한 번만
+    r.finishing = true;
+    var area = tEl('finishArea');
+    if (area) area.setAttribute('aria-busy', 'true');
+    var isSelected = Number(teacherState.selectedRowIndex) === Number(rowIndex) && tEl('commentInput');
+    var comment = isSelected ? tEl('commentInput').value : String(sub.teacherComment || '');
+    var session = teacherSession, rowKey = sub.rowKey;
+    // 앞서 누른 채점 칸 저장이 끝난 뒤에 보낸다
+    var res = await runInRowQueue(rowIndex, async function () {
+      if (session !== teacherSession) return null;
+      var s = findSub(rowIndex);
+      if (!s || s.rowKey !== rowKey) return { success: false, message: '제출 기록이 바뀌었어요. 새로고침해 주세요.' };
+      var payload = { authPassword: teacherState.pw, rowIndex: s.rowIndex, rowKey: rowKey, teacherComment: comment };
+      if (mode === 'complete') payload.forceComplete = true;
+      try {
+        return await serverCall('updateStudentQuestionGrade', payload);
+      } catch (e) {
+        return { success: false, message: '연결을 확인해 주세요.' };
+      }
+    });
+    r.finishing = false;
+    if (session !== teacherSession) return;
+    if (area) area.removeAttribute('aria-busy');
+    var cur = findSub(rowIndex);
+    if (!res || !res.success || !cur || cur.rowKey !== rowKey) {
+      showToast('저장하지 못했어요. ' + ((res && res.message) || '다시 눌러 주세요.'), 'error');
+      return;
+    }
+    cur.teacherComment = comment.trim();
+    if (typeof res.newTotalScore === 'number') cur.totalScore = res.newTotalScore;
+    cur.isCompleted = res.isCompleted === true;
+    delete commentDrafts[rowIndex];
+    var msg = mode === 'commentOnly' ? '한 말씀을 저장했어요' : '채점을 끝냈어요';
+    var onScreen = teacherState.gradeView === 'byStudent' && Number(teacherState.selectedRowIndex) === Number(rowIndex);
+    var next = neighborRow(rowIndex, 1);
+    if (onScreen && next) {
+      selectStudent(next.rowIndex);
+      renderTopBar();
+      showToast(msg);
+      return;
+    }
+    if (onScreen) {
+      rerenderGradeKeepingFocus('#finishStudentBtn');
+      renderTopBar();
+      showToast(msg + '. 마지막 학생이에요');
+      return;
+    }
+    paintRowSummary(rowIndex);
+    showToast(msg);
+  }
+
+  function goPrevStudent() {
+    var prev = neighborRow(teacherState.selectedRowIndex, -1);
+    if (!prev) { showToast('첫 학생이에요'); return; }
+    selectStudent(prev.rowIndex);
+  }
+
+  function onGradeClick(e) {
+    var b = e.target.closest('button');
+    if (!b || !tEl('panelGrade').contains(b)) return;
+    if (b.hasAttribute('data-gview')) {
+      teacherState.gradeView = b.getAttribute('data-gview');
+      rerenderGradeKeepingFocus('#' + b.id);
+    } else if (b.hasAttribute('data-qnum')) {
+      teacherState.selectedQNum = Number(b.getAttribute('data-qnum'));
+      rerenderGradeKeepingFocus('#qPicker button[data-qnum="' + teacherState.selectedQNum + '"]');
+    } else if (b.hasAttribute('data-pick-row')) {
+      var row = Number(b.getAttribute('data-pick-row'));
+      selectStudent(row, '#gradeRoster button[data-pick-row="' + row + '"]');
+    } else if (b.hasAttribute('data-mark')) {
+      onMarkClick(b);
+    } else if (b.id === 'prevStudentBtn') {
+      goPrevStudent();
+    } else if (b.id === 'finishStudentBtn') {
+      finishStudent(teacherState.selectedRowIndex, 'auto');
+    } else if (b.hasAttribute('data-finish')) {
+      finishStudent(teacherState.selectedRowIndex, b.getAttribute('data-finish'));
+    }
   }
 
   // ----- 이벤트 -----
@@ -212,6 +729,21 @@
   tEl('tabGrade').parentNode.addEventListener('keydown', onTabKeydown);
   tEl('publishSwitch').addEventListener('change', function (e) { togglePublish(e.target.checked); });
   tEl('toStudentBtn').addEventListener('click', leaveTeacherMode);
+  tEl('panelGrade').addEventListener('click', onGradeClick);
+  tEl('panelGrade').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && e.target.classList.contains('score-input')) { e.preventDefault(); commitScore(e.target); }
+  });
+  // blur 는 버블링하지 않으므로 캡처 단계에서 받는다
+  tEl('panelGrade').addEventListener('blur', function (e) {
+    var t = e.target;
+    if (!t.classList || !t.classList.contains('score-input')) return;
+    var to = e.relatedTarget;
+    if (to && to.classList && to.classList.contains('mark-cell') && t.closest('.grade-cell').contains(to)) return; // 같은 칸의 다른 표시를 누르는 중
+    commitScore(t);
+  }, true);
+  tEl('panelGrade').addEventListener('input', function (e) {
+    if (e.target.id === 'commentInput') commentDrafts[teacherState.selectedRowIndex] = e.target.value;
+  });
   tEl('pwOkBtn').addEventListener('click', function () { confirmTeacherLogin(); });
   tEl('pwCancelBtn').addEventListener('click', closeTeacherLogin);
   tEl('passwordModal').addEventListener('keydown', function (e) {

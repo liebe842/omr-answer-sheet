@@ -6,6 +6,9 @@
   var failFn = params.get('fail') || '';
   var show = params.get('show') || ''; // correct: 정답 보이기 / noscore: 점수 숨기기
   window.__stubReject = {}; // {서버함수명: true} 이면 통신 실패(실패 핸들러 호출)
+  window.__stubFailQueue = {}; // {서버함수명: [true, false, ...]} 호출마다 하나씩 꺼내 true 면 실패 응답
+  // 응답 지연(ms): 숫자면 고정, 없으면 0~19ms 무작위. ?delay=0 으로도 고정 가능
+  window.__stubDelay = params.get('delay') !== null ? Number(params.get('delay')) : undefined;
   var TEACHER_PW = '1234';
   window.__gasCalls = [];
   window.__stubScenario = scenario;
@@ -34,14 +37,17 @@
     return splitSlots(q.rawAnswerStr, q.qType).map(function (s) { return s.join('/'); }).join(', ');
   }
 
-  var state = {
-    settings: {
-      examTitle: '사회 2단원 평가 답안지', teacherPassword: TEACHER_PW, showScore: show !== 'noscore', showCorrectAnswers: show === 'correct',
-      ignoreSpaces: true, allowResubmit: false, omrTheme: 'blue', publishResults: false
-    },
-    questions: scenario === 'empty' ? [] : baseQuestions(),
-    rows: []
-  };
+  var state;
+  function newState() {
+    return {
+      settings: {
+        examTitle: '사회 2단원 평가 답안지', teacherPassword: TEACHER_PW, showScore: show !== 'noscore', showCorrectAnswers: show === 'correct',
+        ignoreSpaces: true, allowResubmit: false, omrTheme: 'blue', publishResults: false
+      },
+      questions: scenario === 'empty' ? [] : baseQuestions(),
+      rows: []
+    };
+  }
 
   // 단일 문항 채점 (서버 evaluateSingleQuestion 의 핵심 규칙)
   function norm(s) { return String(s || '').trim().replace(/\s+/g, '').toLowerCase(); }
@@ -111,7 +117,12 @@
       });
     });
   }
-  if (scenario === 'teacher') seedTeacherRows();
+  // 처음 상태로 되돌리기 (셀프테스트가 앞 테스트의 채점 흔적 없이 시작할 때)
+  window.__stubReset = function () {
+    state = newState();
+    if (scenario === 'teacher') seedTeacherRows();
+  };
+  window.__stubReset();
 
   // ===== 서버 함수 (반환 형태는 Code.js 와 동일) =====
   var server = {
@@ -282,7 +293,9 @@
           var result;
           try {
             if (window.__stubReject[name]) { if (onFail) onFail(new Error('통신 실패(테스트)')); return; }
-            if (failFn === name) {
+            var queued = window.__stubFailQueue[name];
+            var failOnce = queued && queued.length ? queued.shift() : false;
+            if (failFn === name || failOnce) {
               // 지정한 함수는 서버가 돌려주는 실패 응답 형태로 대체
               result = name === 'updateStudentQuestionGrade' ? { success: false, message: '권한이 없습니다.' }
                 : { success: false, message: '서버 오류(테스트)' };
@@ -294,7 +307,7 @@
             return;
           }
           if (onOk) onOk(result);
-        }, Math.floor(Math.random() * 20));
+        }, typeof window.__stubDelay === 'number' ? window.__stubDelay : Math.floor(Math.random() * 20));
       };
     });
     // 서버에 없는 함수를 호출하면 실패 핸들러로 전달
