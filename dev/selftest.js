@@ -25,6 +25,46 @@
   // 비동기 테스트용 짧은 대기
   window.sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
 
+
+  // 스크린샷용 상태 만들기: ?demo=waiting | result (result 는 fresh 에서 일부 오답을 내고 공개, perfect 시나리오는 바로 결과)
+  var demoMode = params.get('demo');
+  if (demoMode) {
+    window.addEventListener('load', function () {
+      setTimeout(async function () {
+        if (pageScenario !== 'perfect') {
+          document.getElementById('studentNumber').value = '7';
+          document.getElementById('studentName').value = '홍길동';
+          document.querySelector('.bubble[data-q="1"][data-v="3"]').click();
+          document.querySelector('.bubble[data-q="2"][data-b="0"][data-v="2"]').click();
+          document.querySelector('.bubble[data-q="2"][data-b="1"][data-v="4"]').click();
+          document.querySelector('.bubble[data-q="3"][data-v="' + (demoMode === 'result' ? 'ㄷ' : 'ㄴ') + '"]').click();
+          document.querySelector('.bubble[data-q="4"][data-v="O"]').click();
+          var inputs = document.querySelectorAll('input[data-q="5"]');
+          inputs[0].value = '세종'; inputs[0].dispatchEvent(new Event('input', { bubbles: true }));
+          if (demoMode === 'result') {
+            await submitAnswers({ skipEmptyCheck: true });
+          } else {
+            inputs[1].value = '장영실'; inputs[1].dispatchEvent(new Event('input', { bubbles: true }));
+            var ta = document.querySelector('textarea[data-q="6"]');
+            ta.value = '길이 넓어지고 건물이 높아졌다.'; ta.dispatchEvent(new Event('input', { bubbles: true }));
+            await submitAnswers();
+          }
+        }
+        if (demoMode === 'result') {
+          if (pageScenario !== 'perfect') {
+            await serverCall('setPublishResultsStatus', { authPassword: '1234', publish: true, markAllCompleted: true });
+            var res = await serverCall('checkStudentResultStatus', { studentNumber: '7', studentName: '홍길동' });
+            res.teacherComment = '공공 기관 이름을 정확히 알고 있네요. 잘했어요!';
+            renderResult(res);
+          } else {
+            document.getElementById('answerForm').hidden = true;
+            renderResult(await serverCall('checkStudentResultStatus', { studentNumber: '1', studentName: '김하늘' }));
+          }
+        }
+      }, 200);
+    });
+  }
+
   if (!enabled) return;
 
   // ===== Task 1: 공용 헬퍼 =====
@@ -257,11 +297,17 @@
     typeInto(t[0], '세종'); typeInto(t[1], '장영실');
     typeInto(document.querySelector('textarea[data-q="6"]'), '서술');
   }
+  // 저장된 제출 기록을 지우고 빈 답안지로 다시 불러온다 (앞 테스트의 복귀 상태 차단)
+  async function freshLoad() {
+    clearSavedSubmission();
+    savedSubmission = null;
+    await loadStudentScreen();
+  }
   function lastSubmitCall() {
     return window.__gasCalls.filter(function (c) { return c.fn === 'submitStudentAnswers'; }).pop();
   }
   test('student: 문항 6개 행, 제목, 라벨 연결, 배점 열', async function () {
-    await loadStudentScreen();
+    await freshLoad();
     assertEq(document.getElementById('examTitle').textContent, '사회 2단원 평가 답안지');
     assertEq(document.querySelectorAll('#answerTable tr[data-row]').length, 6);
     assertEq(document.querySelector('label[for="studentNumber"]').textContent, '번호');
@@ -270,14 +316,14 @@
     assertEq(studentQuestions.length, 6);
   });
   test('student: 2번 문항에 (1)(2) 버블 그룹 두 개, 그룹 aria-label', async function () {
-    await loadStudentScreen();
+    await freshLoad();
     var g = document.querySelectorAll('tr[data-row="2"] [role="group"]');
     assertEq(g.length, 2);
     assertEq(g[0].getAttribute('aria-label'), '2번 (1)');
     assertEq(document.querySelectorAll('tr[data-row="1"] [role="group"]').length, 1);
   });
   test('student: 버블 클릭으로 선택, 다시 클릭하면 해제', async function () {
-    await loadStudentScreen();
+    await freshLoad();
     pressBubble(1, 0, '3');
     assertEq(studentAnswers[1][0], '3');
     assertEq(document.querySelector('.bubble[data-q="1"][data-v="3"]').getAttribute('aria-pressed'), 'true');
@@ -286,7 +332,7 @@
     assertEq(document.querySelector('.bubble[data-q="1"][data-v="3"]').getAttribute('aria-pressed'), 'false');
   });
   test('student: 객관식 다른 번호 입력과 버블 동기화', async function () {
-    await loadStudentScreen();
+    await freshLoad();
     var inp = document.querySelector('input.other-num[data-q="1"]');
     assertEq(inp.getAttribute('aria-label'), '1번 다른 번호');
     typeInto(inp, '4');
@@ -304,7 +350,7 @@
     assertEq(findEmptyQuestions(qs, { 1: ['3'], 2: ['1', '2'], 3: ['a'] }), []);
   });
   test('student: 번호·이름이 비면 서버 호출 없이 인라인 오류', async function () {
-    await loadStudentScreen();
+    await freshLoad();
     fillInfo('', '');
     var n = window.__gasCalls.length;
     await submitAnswers({ skipEmptyCheck: true });
@@ -313,7 +359,7 @@
     assertEq(document.activeElement.id, 'studentNumber');
   });
   test('student: 빈 문항이 있으면 #emptyCheck 안내, 다시 보기는 첫 빈 문항으로', async function () {
-    await loadStudentScreen();
+    await freshLoad();
     fillInfo('7', '홍길동');
     pressBubble(1, 0, '3');
     var n = window.__gasCalls.length;
@@ -329,7 +375,7 @@
     assertEq(document.activeElement.getAttribute('data-q'), '2');
   });
   test('student: 모두 답하고 제출하면 payload의 5번은 길이 2 배열', async function () {
-    await loadStudentScreen();
+    await freshLoad();
     fillInfo('7', '홍길동');
     answerAll();
     await submitAnswers();
@@ -344,15 +390,15 @@
     assertTrue(typeof savedSubmission.submittedAt === 'number');
   });
   test('student: 위험 문자 이름은 DOM 요소가 되지 않는다', async function () {
-    await loadStudentScreen();
+    await freshLoad();
     fillInfo('8', '<b>"민\'수"</b>');
     answerAll();
     await submitAnswers();
     assertEq(lastSubmitCall().payload.studentName, '<b>"민\'수"</b>');
-    assertEq(document.querySelectorAll('#studentView b').length, 0);
+    assertEq(document.querySelectorAll('#studentView b:not(#waitingNote b)').length, 0);
   });
   test('student: 서버 실패 메시지는 .inline-error로, 버튼은 되돌아온다', async function () {
-    await loadStudentScreen();
+    await freshLoad();
     fillInfo('7', '홍길동'); // 앞 테스트에서 이미 제출한 학생이라 스텁이 거절
     answerAll();
     await submitAnswers();
@@ -364,15 +410,244 @@
     assertTrue(!document.getElementById('answerForm').hidden, '폼 유지');
   });
   test('student: 가로 스크롤 없음', async function () {
-    await loadStudentScreen();
+    await freshLoad();
     assertTrue(document.documentElement.scrollWidth <= window.innerWidth,
       'scrollWidth ' + document.documentElement.scrollWidth + ' > ' + window.innerWidth);
   });
   test('student: 빈 시나리오는 안내 문구', async function () {
-    await loadStudentScreen();
+    await freshLoad();
     assertTrue(document.getElementById('studentStatus').textContent.indexOf('등록된 문항이 없어요.') >= 0);
     assertTrue(document.getElementById('answerForm').hidden, '폼 숨김');
   }, { scenario: 'empty' });
+
+  // ===== Task 4: 대기 / 복귀 / 결과 =====
+  function callsOf(fn) {
+    return window.__gasCalls.filter(function (c) { return c.fn === fn; });
+  }
+  function glyphsOf() {
+    return Array.prototype.map.call(document.querySelectorAll('#studentAfter td.mark'), function (td) {
+      var g = td.querySelector('.grade-glyph');
+      return g ? g.textContent : '';
+    });
+  }
+  test('student: readSavedSubmission 저장 직후, 다른 제목, 12시간 초과, 스토리지 예외', function () {
+    var s = { studentNumber: '3', studentName: '가나', answers: { 1: ['3'] }, examTitle: '시험A', submittedAt: 1000000 };
+    saveSubmission(s);
+    assertEq(readSavedSubmission('시험A', 1000000).studentName, '가나');
+    assertEq(readSavedSubmission('시험B', 1000000), null);
+    assertEq(localStorage.getItem(SAVED_KEY), null, '불일치는 삭제');
+    saveSubmission(s);
+    assertEq(readSavedSubmission('시험A', s.submittedAt + SAVED_TTL_MS), s);
+    assertEq(readSavedSubmission('시험A', s.submittedAt + SAVED_TTL_MS + 1), null);
+    assertEq(localStorage.getItem(SAVED_KEY), null, '초과는 삭제');
+    localStorage.setItem(SAVED_KEY, '{깨진 json');
+    assertEq(readSavedSubmission('시험A', 1), null);
+    var origGet = Storage.prototype.getItem, origSet = Storage.prototype.setItem;
+    try {
+      Storage.prototype.getItem = function () { throw new Error('막힘'); };
+      Storage.prototype.setItem = function () { throw new Error('막힘'); };
+      assertEq(readSavedSubmission('시험A', 1), null);
+      saveSubmission(s); // 예외 없이 지나가야 한다
+      clearSavedSubmission();
+    } finally {
+      Storage.prototype.getItem = origGet;
+      Storage.prototype.setItem = origSet;
+    }
+    clearSavedSubmission();
+  });
+  test('student: markGlyph', function () {
+    assertEq(markGlyph('O'), '○');
+    assertEq(markGlyph('X'), '/');
+    assertEq(markGlyph('△'), '△');
+    assertEq(markGlyph('보류'), '');
+    assertEq(markGlyph(undefined), '');
+  });
+  test('student: 제출하면 대기 화면, 폼은 숨김, 저장됨', async function () {
+    await freshLoad();
+    fillInfo('11', '대기생');
+    answerAll();
+    await submitAnswers();
+    var note = document.getElementById('waitingNote');
+    assertTrue(note !== null && note.offsetParent !== null, '대기 안내 보임');
+    assertTrue(note.textContent.indexOf('답안지를 냈어요.') >= 0);
+    assertTrue(note.textContent.indexOf('선생님이 채점하시면 이 화면에 바로 나와요.') >= 0);
+    assertTrue(document.getElementById('answerForm').hidden, '폼 숨김');
+    assertEq(document.getElementById('studentNumber').readOnly, true);
+    assertEq(document.querySelector('#studentAfter th:nth-child(3)').textContent, '채점');
+    assertEq(document.querySelectorAll('#studentAfter .bubble:not(:disabled)').length, 0, '읽기 전용');
+    assertEq(JSON.parse(localStorage.getItem(SAVED_KEY)).studentName, '대기생');
+    await sleep(100);
+    assertTrue(/^마지막 확인 \d\d:\d\d$/.test(document.getElementById('pollTime').textContent), '마지막 확인 ' + document.getElementById('pollTime').textContent);
+  });
+  test('student: 새로고침 시뮬레이션(loadStudentScreen 재호출) 후에도 대기 화면', async function () {
+    await loadStudentScreen(); // 앞 테스트가 저장한 기록이 남아 있다
+    assertTrue(document.getElementById('waitingNote') !== null && document.getElementById('answerForm').hidden, '대기 복귀');
+    assertEq(document.getElementById('studentName').value, '대기생');
+    assertEq(document.querySelector('#studentAfter tr[data-row="2"] .bubble[aria-pressed="true"][data-b="1"]').getAttribute('data-v'), '4');
+    await sleep(100);
+    assertEq(callsOf('checkStudentResultStatus').pop().payload, { studentNumber: '11', studentName: '대기생' });
+  });
+  test('student: 확인 간격 5초 -> 7.5초(x1.5), 선생님 화면에서는 멈추고 돌아오면 이어간다', async function () {
+    await loadStudentScreen();
+    await sleep(100);
+    assertEq(pollDelay, 7500);
+    var n = callsOf('checkStudentResultStatus').length;
+    setMode('teacher');
+    assertEq(pollTimer, null, '타이머 해제');
+    await sleep(100);
+    assertEq(callsOf('checkStudentResultStatus').length, n, '멈춤');
+    setMode('student');
+    await sleep(100);
+    assertEq(callsOf('checkStudentResultStatus').length, n + 1, '재개');
+    assertEq(pollDelay, 7500, '재개하면 간격 처음부터');
+  });
+  test('student: 다른 학생이 새로 쓰기 -> 저장 삭제, 확인 중지, 빈 답안지', async function () {
+    await loadStudentScreen();
+    var link = document.getElementById('newStudentLink');
+    assertEq(link.textContent, '다른 학생이 새로 쓰기');
+    assertTrue(link.classList.contains('link-quiet'));
+    link.click();
+    await sleep(100);
+    assertEq(localStorage.getItem(SAVED_KEY), null);
+    assertEq(pollTimer, null);
+    assertTrue(!document.getElementById('answerForm').hidden, '답안지 보임');
+    assertEq(document.getElementById('studentNumber').value, '');
+    assertEq(document.getElementById('studentNumber').readOnly, false);
+    assertEq(document.getElementById('waitingNote'), null);
+    assertEq(document.querySelectorAll('.bubble[aria-pressed="true"]').length, 0);
+  });
+  test('student: 제출 요청의 통신 실패(reject)는 인라인 오류, 버튼 복귀, 저장 없음', async function () {
+    await freshLoad();
+    fillInfo('12', '실패생');
+    answerAll();
+    window.__stubReject.submitStudentAnswers = true;
+    try { await submitAnswers(); } finally { window.__stubReject = {}; }
+    var err = document.getElementById('submitError');
+    assertTrue(!err.hidden && err.textContent.indexOf('답안지를 내지 못했어요') >= 0, '오류 문구');
+    assertEq(document.getElementById('submitBtn').disabled, false);
+    assertEq(localStorage.getItem(SAVED_KEY), null);
+    assertTrue(!document.getElementById('answerForm').hidden, '폼 유지');
+  });
+  test('student: 제출 중 다시 눌러도 서버 요청은 한 번', async function () {
+    await freshLoad();
+    fillInfo('13', '연타생');
+    answerAll();
+    var n = callsOf('submitStudentAnswers').length;
+    var p1 = submitAnswers();
+    var p2 = submitAnswers();
+    await Promise.all([p1, p2]);
+    assertEq(callsOf('submitStudentAnswers').length, n + 1);
+  });
+  test('student: localStorage가 막혀도 제출 -> 대기가 동작한다', async function () {
+    await freshLoad();
+    fillInfo('14', '막힘생');
+    answerAll();
+    var origGet = Storage.prototype.getItem, origSet = Storage.prototype.setItem;
+    try {
+      Storage.prototype.getItem = function () { throw new Error('막힘'); };
+      Storage.prototype.setItem = function () { throw new Error('막힘'); };
+      await submitAnswers();
+    } finally {
+      Storage.prototype.getItem = origGet;
+      Storage.prototype.setItem = origSet;
+    }
+    assertTrue(document.getElementById('waitingNote') !== null, '대기 화면');
+    assertEq(document.getElementById('submitError').hidden, true);
+  });
+  test('student: 공개되면 채점 결과(표시·총점), 정답 숨김이면 정답 줄 없음', async function () {
+    await freshLoad();
+    fillInfo('15', '결과생');
+    pressBubble(1, 0, '3'); pressBubble(2, 0, '2'); pressBubble(2, 1, '4'); pressBubble(3, 0, 'ㄷ'); pressBubble(4, 0, 'O');
+    var t = document.querySelectorAll('input[data-q="5"]');
+    typeInto(t[0], '세종');
+    typeInto(document.querySelector('textarea[data-q="6"]'), '서술');
+    await submitAnswers({ skipEmptyCheck: true });
+    await serverCall('setPublishResultsStatus', { authPassword: '1234', publish: true, markAllCompleted: true });
+    await checkNow();
+    assertEq(studentPhase, 'result');
+    assertEq(pollTimer, null, '확인 중지');
+    assertEq(document.querySelector('#studentAfter th:nth-child(3)').textContent, '채점');
+    assertEq(glyphsOf(), ['○', '○', '/', '○', '△', '']);
+    assertEq(document.querySelector('#studentAfter tr[data-row="5"] .grade-score').textContent, '5');
+    assertEq(document.querySelector('#resultTotal .red-circle').textContent, '25');
+    assertEq(document.querySelectorAll('.stamp').length, 0, '만점 아님');
+    assertEq(document.querySelectorAll('.correct-note').length, 0);
+    assertTrue(document.querySelector('.result-comment') === null, '한 말씀 없음');
+    assertTrue(!!document.querySelector('[data-action="go-start"]'));
+  });
+  test('student: 결과의 처음으로는 저장 삭제 후 빈 답안지', async function () {
+    // 앞 테스트의 결과 화면이 그대로 남아 있다
+    document.querySelector('[data-action="go-start"]').click();
+    await sleep(100);
+    assertEq(localStorage.getItem(SAVED_KEY), null);
+    assertTrue(!document.getElementById('answerForm').hidden, '답안지 보임');
+    assertEq(document.getElementById('resultTotal').hidden, true);
+    assertEq(document.getElementById('studentPaper').classList.contains('paper--result'), false);
+    assertEq(document.getElementById('studentAfter').innerHTML, '');
+  });
+
+  function pressedOf(row) {
+    return Array.prototype.map.call(document.querySelectorAll('#studentAfter tr[data-row="' + row + '"] .bubble[aria-pressed="true"]'), function (b) {
+      return b.getAttribute('data-v');
+    });
+  }
+  test('perfect: 결과에 .stamp(+--hit), 총점 동그라미, 다빈칸 칸별 표시', async function () {
+    var res = await serverCall('checkStudentResultStatus', { studentNumber: '1', studentName: '김하늘' });
+    renderResult(res);
+    var stamp = document.querySelector('#studentAfter .stamp');
+    assertTrue(!!stamp && stamp.classList.contains('stamp--hit'), '.stamp.stamp--hit');
+    assertTrue(stamp.textContent.replace(/\s/g, '').indexOf('참잘했어요') >= 0, '도장 글자');
+    assertEq(document.querySelector('#resultTotal .red-circle').textContent, '45');
+    assertEq(glyphsOf(), ['○', '○', '○', '○', '○', '○']);
+    assertEq(pressedOf(2), ['2', '4'], '2번 칸별 버블');
+    var reads = Array.prototype.map.call(document.querySelectorAll('#studentAfter tr[data-row="5"] .answer-read'), function (e) { return e.textContent; });
+    assertEq(reads, ['세종대왕/세종', '장영실'], '5번 칸별 답(서버 문자열 분해)');
+    assertEq(document.querySelector('.result-comment').textContent, '정말 잘했어요.');
+    var cs = getComputedStyle(stamp);
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) assertEq(cs.animationName, 'none');
+    else assertTrue(cs.animationName !== 'none', 'animation ' + cs.animationName);
+  }, { scenario: 'perfect' });
+  test('perfect: 이 기기에 저장한 답이 있으면 그 답을 칸별로 쓴다', async function () {
+    savedSubmission = { studentNumber: '1', studentName: '김하늘', examTitle: studentExamTitle, submittedAt: Date.now(), answers: { 1: ['1'], 2: ['3', '5'], 5: ['세종', '장영실'] } };
+    var res = await serverCall('checkStudentResultStatus', { studentNumber: '1', studentName: '김하늘' });
+    renderResult(res);
+    assertEq(pressedOf(1), ['1']);
+    assertEq(pressedOf(2), ['3', '5']);
+    var reads = Array.prototype.map.call(document.querySelectorAll('#studentAfter tr[data-row="5"] .answer-read'), function (e) { return e.textContent; });
+    assertEq(reads, ['세종', '장영실']);
+    savedSubmission = null;
+  }, { scenario: 'perfect' });
+  test('perfect: 틀린 행에 정답(빨간 펜), 위험 문자는 글자 그대로', async function () {
+    var evil = '<img src=x onerror=alert(1)>';
+    renderResult({
+      published: true, studentNumber: '1', studentName: '김하늘', showScore: true, showCorrectAnswers: true,
+      totalScore: 10, maxScore: 45, isPerfectScore: false, teacherComment: evil + '"\'',
+      details: [
+        { qNum: 1, qType: '객관식', userAnswer: '2', status: 'X', earnedPoints: 0, maxPoints: 5, correctAnswer: '3' },
+        { qNum: 5, qType: '단답식', userAnswer: evil + ', 장영실', status: '△', earnedPoints: 7.5, maxPoints: 10, correctAnswer: evil },
+        { qNum: 6, qType: '서술형', userAnswer: evil, status: '보류', earnedPoints: 0, maxPoints: 10, correctAnswer: null }
+      ]
+    });
+    var notes = Array.prototype.map.call(document.querySelectorAll('.correct-note'), function (e) { return e.textContent; });
+    assertEq(notes, ['→ 3', '→ ' + evil]);
+    assertEq(document.querySelectorAll('#studentView img').length, 0, '요소가 되지 않는다');
+    assertEq(document.querySelector('.result-comment').textContent, evil + '"\'');
+    assertEq(glyphsOf(), ['/', '△', '']);
+    assertEq(document.querySelector('tr[data-row="5"] .grade-score').textContent, '7.5');
+    assertEq(document.querySelectorAll('.stamp').length, 0);
+    assertEq(getComputedStyle(document.querySelector('.correct-note')).color, 'rgb(214, 38, 43)');
+  }, { scenario: 'perfect' });
+  test('perfect: showScore가 false면 표시·총점 없이 안내와 한 말씀', async function () {
+    renderResult({
+      published: true, studentNumber: '1', studentName: '김하늘', showScore: false, showCorrectAnswers: true,
+      totalScore: 45, maxScore: 45, isPerfectScore: true, teacherComment: '수고했어요.',
+      details: [{ qNum: 1, qType: '객관식', userAnswer: '3', status: 'O', earnedPoints: 5, maxPoints: 5, correctAnswer: '3' }]
+    });
+    assertEq(document.getElementById('resultTotal').hidden, true);
+    assertEq(document.querySelectorAll('.grade-glyph, .stamp, .correct-note').length, 0);
+    assertTrue(document.getElementById('studentAfter').textContent.indexOf('선생님이 채점을 마쳤어요.') >= 0);
+    assertEq(document.querySelector('.result-comment').textContent, '수고했어요.');
+  }, { scenario: 'perfect' });
 
   // ===== 실행 =====
   async function runAll() {

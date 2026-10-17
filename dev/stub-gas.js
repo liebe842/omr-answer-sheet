@@ -4,6 +4,8 @@
   var params = new URLSearchParams(location.search);
   var scenario = params.get('scenario') || 'fresh';
   var failFn = params.get('fail') || '';
+  var show = params.get('show') || ''; // correct: 정답 보이기 / noscore: 점수 숨기기
+  window.__stubReject = {}; // {서버함수명: true} 이면 통신 실패(실패 핸들러 호출)
   var TEACHER_PW = '1234';
   window.__gasCalls = [];
   window.__stubScenario = scenario;
@@ -34,7 +36,7 @@
 
   var state = {
     settings: {
-      examTitle: '사회 2단원 평가 답안지', teacherPassword: TEACHER_PW, showScore: true, showCorrectAnswers: false,
+      examTitle: '사회 2단원 평가 답안지', teacherPassword: TEACHER_PW, showScore: show !== 'noscore', showCorrectAnswers: show === 'correct',
       ignoreSpaces: true, allowResubmit: false, omrTheme: 'blue', publishResults: false
     },
     questions: scenario === 'empty' ? [] : baseQuestions(),
@@ -279,6 +281,7 @@
         setTimeout(function () {
           var result;
           try {
+            if (window.__stubReject[name]) { if (onFail) onFail(new Error('통신 실패(테스트)')); return; }
             if (failFn === name) {
               // 지정한 함수는 서버가 돌려주는 실패 응답 형태로 대체
               result = name === 'updateStudentQuestionGrade' ? { success: false, message: '권한이 없습니다.' }

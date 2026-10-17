@@ -263,8 +263,22 @@
   .blank-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0 8px; }
   .blank-label { font-size: 12px; font-weight: 700; min-width: 24px; }
   .line-input.other-num { width: 72px; min-width: 0; text-align: center; font-size: 16px; }
-  .answer-cell .line-input.text-answer { width: 100%; }
+  .answer-cell .line-input.text-answer { flex: 1 1 0; width: auto; min-width: 80px; }
   .answer-read { padding: 6px 2px; overflow-wrap: anywhere; }
+  .blank-row .answer-read { flex: 1 1 0; min-width: 0; }
+  .bubble:disabled { cursor: default; }
+
+  /* 채점 결과 */
+  .result-total { position: absolute; top: 14px; right: 20px; }
+  .result-total .red-circle { font-size: 30px; min-width: 56px; text-align: center; }
+  .paper--result .paper-title { padding: 0 64px; }
+  .answer-table td.mark .grade-glyph { font-size: 28px; }
+  .answer-table td.mark .grade-score { font-size: 19px; }
+  .correct-note { font-size: 22px; padding-left: 2px; overflow-wrap: anywhere; }
+  .result-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
+  .result-comment { margin: 0; font-size: 22px; overflow-wrap: anywhere; }
+  .stamp { flex: none; color: var(--red-pen); }
+  .poll-time { margin: 6px 0 0; text-align: center; font-size: 12px; color: var(--ink-soft); }
   .submit-row { text-align: center; margin-top: 16px; }
   #emptyCheck .btn-ink, #emptyCheck .btn-quiet { margin: 8px 4px 0; }
 
@@ -283,6 +297,10 @@
     .answer-table td.mark { width: 36px; padding-left: 2px; padding-right: 2px; }
     .answer-table td.answer-cell { padding-left: 2px; padding-right: 2px; }
     .blank-row { gap: 0 4px; }
+    .paper--result .paper-title { padding: 0 58px; font-size: 20px; }
+    .result-total { right: 12px; }
+    .result-total .red-circle { font-size: 26px; min-width: 48px; padding: 0 10px; }
+    .correct-note { font-size: 20px; }
   }
 
   @media (prefers-reduced-motion: reduce) {
