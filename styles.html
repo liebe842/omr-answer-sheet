@@ -1,0 +1,59 @@
+<style>
+  /* 색 토큰: 이 값 외의 색은 쓰지 않는다. --red-pen 은 선생님 채점 표시·점수·정답·한 말씀·도장에만 */
+  :root {
+    --desk: #b9bfb3;
+    --paper: #ebe6d6;
+    --paper-shade: rgba(0, 0, 0, .05);
+    --ink: #1f1f1d;
+    --ink-soft: #3b3f37;
+    --red-pen: #d6262b;
+    --font-title: 'Gowun Batang', serif;
+    --font-body: 'Nanum Gothic', sans-serif;
+    --font-pen: 'Nanum Pen Script', cursive;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--desk);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-weight: 400;
+    line-height: 1.6;
+    overflow-x: hidden;
+  }
+  h1, h2, h3 { font-family: var(--font-title); font-weight: 700; margin: 0; }
+
+  /* 키보드 포커스 링 */
+  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, label:focus-visible {
+    outline: 2px solid var(--ink);
+    outline-offset: 2px;
+  }
+
+  /* 알림 줄 */
+  #toast {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%);
+    max-width: calc(100vw - 32px);
+    padding: 10px 18px;
+    background: var(--ink);
+    color: var(--paper);
+    border-radius: 2px;
+    font-size: 15px;
+    font-weight: 700;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .15s;
+    z-index: 100;
+  }
+  #toast.show { opacity: 1; }
+  #toast.error { background: var(--ink); border-left: 4px solid var(--red-pen); }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition: none !important; animation: none !important; }
+  }
+</style>

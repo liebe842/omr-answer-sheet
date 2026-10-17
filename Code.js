@@ -15,6 +15,11 @@ function doGet(e) {
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
+// index.html 등에서 <?!= include('파일명') ?> 로 다른 html 파일 내용을 끼워 넣을 때 사용
+function include(name) {
+  return HtmlService.createHtmlOutputFromFile(name).getContent();
+}
+
 // 초기 시트 세팅 함수
 function initialSetup() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();

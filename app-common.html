@@ -1,0 +1,61 @@
+<script>
+  // ===== 공용 헬퍼 =====
+
+  // 서버 함수 호출 래퍼: 성공 응답은 그대로 resolve(호출부가 .success 확인), 통신 실패는 reject
+  function serverCall(fnName, payload) {
+    return new Promise(function (resolve, reject) {
+      try {
+        var runner = google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler(function (err) {
+            reject(err instanceof Error ? err : new Error(err && err.message ? err.message : String(err)));
+          });
+        if (payload === undefined) runner[fnName]();
+        else runner[fnName](payload);
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+
+  // 알림 줄: 2500ms 뒤 사라진다. kind 는 'info' | 'error'
+  var toastTimer = null;
+  function showToast(message, kind) {
+    var el = document.getElementById('toast');
+    el.textContent = message;
+    el.classList.remove('error');
+    if (kind === 'error') el.classList.add('error');
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.classList.remove('show'); }, 2500);
+  }
+
+  // 사용자 입력 문자열을 innerHTML 에 넣기 전 이스케이프
+  function escapeHtml(str) {
+    return String(str === null || str === undefined ? '' : str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  // 문항 유형 헬퍼 (서버 normalizeQuestionType 의 정식 유형 문자열과 동일)
+  var CHOICE_TYPES = ['객관식', '기호(ㄱ,ㄴ,ㄷ)', '기호(가,나,다)', 'OX퀴즈'];
+  function isChoiceType(qType) {
+    return CHOICE_TYPES.indexOf(qType) >= 0;
+  }
+  function getBubbleOptionsForType(qType) {
+    if (qType === '기호(ㄱ,ㄴ,ㄷ)') return ['ㄱ', 'ㄴ', 'ㄷ', 'ㄹ', 'ㅁ', 'ㅂ'];
+    if (qType === '기호(가,나,다)') return ['가', '나', '다', '라', '마', '바'];
+    if (qType === 'OX퀴즈') return ['O', 'X'];
+    return ['1', '2', '3', '4', '5'];
+  }
+
+  // 학생 / 선생님 화면 전환
+  function setMode(mode) {
+    var isTeacher = mode === 'teacher';
+    document.getElementById('studentView').hidden = isTeacher;
+    document.getElementById('teacherView').hidden = !isTeacher;
+  }
+</script>
