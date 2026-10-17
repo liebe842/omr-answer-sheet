@@ -847,9 +847,10 @@
 
     teacherQuestionsData = (data.questions || []).map(q => ({
       qNum: q.qNum,
+      origQNum: q.qNum, // 저장 시 기존 제출 답안을 새 문항 순서로 옮기기 위한 원래 번호
       qType: q.qType || '객관식',
       rawAnswerStr: q.rawAnswerStr || '',
-      points: q.points || 20,
+      points: typeof q.points === 'number' ? q.points : 20,
       partialCredit: q.partialCredit === true
     }));
 
@@ -1037,7 +1038,7 @@
       .withSuccessHandler(function(res) {
         if (res.success) {
           alert(isChecked
-            ? '📢 결과 일괄 공개 스위치가 켜졌습니다! 대기 화면에서 기다리던 모든 학생들에게 즉시 채점 결과가 나타납니다.'
+            ? '📢 결과 일괄 공개 스위치가 켜졌습니다! 채점이 끝난 학생들에게 즉시 결과가 나타나고, 서술형 채점이 남은 학생은 채점을 마치는 대로 공개됩니다.'
             : '🔒 결과 공개 스위치가 꺼졌습니다. 이제 제출하는 학생들은 대기 화면에서 기다리게 됩니다.');
           refreshTeacherData();
         }
@@ -1045,7 +1046,7 @@
       .setPublishResultsStatus({
         authPassword: verifiedTeacherPassword,
         publish: isChecked,
-        markAllCompleted: true
+        markAllCompleted: false // 서술형 채점이 남은 학생은 채점 완료 후 공개되도록 유지
       });
   }
 
@@ -1145,6 +1146,7 @@
   function addNewQuestionRow() {
     teacherQuestionsData.push({
       qNum: teacherQuestionsData.length + 1,
+      origQNum: null, // 새로 추가한 문항 (기존 제출 답안 없음)
       qType: '객관식',
       rawAnswerStr: '1',
       points: 20,

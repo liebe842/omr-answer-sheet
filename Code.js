@@ -492,7 +492,8 @@ function checkStudentResultStatus(payload) {
     const slots = parseAnswerSlots(qRows[i][3], qType);
     const displayCorrect = slots.map(s => s.join('/')).join(', ');
 
-    const qRecord = perQMap[qNum] || { status: 'O', earnedPoints: maxPts };
+    // 제출 이후 추가된 문항 등 채점 기록이 없으면 미응답(0점)으로 처리
+    const qRecord = perQMap[qNum] || { status: 'X', earnedPoints: 0 };
     const earned = Number(qRecord.earnedPoints) || 0;
     totalScore += earned;
     
@@ -782,6 +783,8 @@ function saveTeacherConfig(payload) {
       ['publishResults', newSettings.publishResults ? 'TRUE' : 'FALSE', '결과 일괄 공개 여부']
     ];
     configSheet.clearContents();
+    // 설정값(B열)을 텍스트로 지정해 '0123' 같은 비밀번호가 숫자 123으로 바뀌지 않도록 함
+    configSheet.getRange(2, 2, configData.length - 1, 1).setNumberFormat('@');
     configSheet.getRange(1, 1, configData.length, 3).setValues(configData);
     
     const answerSheet = ss.getSheetByName('정답설정');
@@ -807,13 +810,111 @@ function saveTeacherConfig(payload) {
 
     // 드롭다운, C열 쉼표 자동계산 수식, 체크박스 재적용
     applySheetFormattingAndFormulas();
-    
+
+    // 문항 삭제/순서 변경/추가 시 기존 제출 답안과 채점 기록을 새 문항 번호에 맞게 이동
+    remapSubmissionsToQuestions(questions, rowsToWrite);
+
     return { success: true, message: '설정과 정답지가 구글 시트(드롭다운 및 C열 자동 계산 수식 포함)에 완벽히 반영되었습니다!' };
   } catch (err) {
     return { success: false, message: '저장 오류: ' + err.message };
   } finally {
     lock.releaseLock();
   }
+}
+
+// 문항 편집 후 제출결과 시트의 문항별 답안 열(I열~)과 문항별점수JSON을 새 문항 번호 기준으로 재배치
+// questions[idx].origQNum: 편집 전 문항 번호 (null이면 새로 추가된 문항), rowsToWrite[idx]: 새 정답설정 행
+function remapSubmissionsToQuestions(questions, rowsToWrite) {
+  // 이전 버전 화면에서 저장한 경우(원래 번호 정보 없음)에는 기존 동작대로 건드리지 않음
+  if (rowsToWrite.length === 0 || questions.some(q => q.origQNum === undefined)) return;
+
+  const resultSheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('제출결과');
+  const rRows = resultSheet.getDataRange().getValues();
+  if (rRows.length < 2) return;
+
+  // 기존 헤더의 'N번답' 열 위치를 문항 번호로 찾음
+  const oldColByQNum = {};
+  rRows[0].forEach((h, c) => {
+    const m = String(h).trim().match(/^(\d+)번답$/);
+    if (m && c >= 8) oldColByQNum[Number(m[1])] = c;
+  });
+
+  const origNums = questions.map(q => (q.origQNum === null || q.origQNum === '') ? null : Number(q.origQNum));
+  const isUnchanged = origNums.length === Object.keys(oldColByQNum).length &&
+    origNums.every((n, idx) => n === idx + 1 && oldColByQNum[n] === 8 + idx);
+  if (isUnchanged) return;
+
+  const ignoreSpaces = getSettingsMap().ignoreSpaces === true;
+  const width = Math.max(rRows[0].length, 8 + rowsToWrite.length);
+  const pad = (arr) => arr.concat(new Array(width - arr.length).fill(''));
+
+  const headers = ['제출일시', '번호', '이름', '총점', '상세채점결과', '채점완료여부', '선생님코멘트', '문항별점수JSON'];
+  rowsToWrite.forEach(r => headers.push(`${r[0]}번답`));
+  const output = [pad(headers).slice(3)];
+
+  for (let i = 1; i < rRows.length; i++) {
+    const row = rRows[i];
+    if (!row[0] && !row[2]) {
+      output.push(pad(row.slice()).slice(3));
+      continue;
+    }
+
+    let oldPerQ = {};
+    try {
+      if (row[7]) oldPerQ = JSON.parse(String(row[7]));
+    } catch (e) {}
+
+    const newPerQ = {};
+    const newAnswers = [];
+    let total = 0;
+    let hasPending = false;
+    const summaryParts = [];
+
+    rowsToWrite.forEach((qRow, idx) => {
+      const newQNum = qRow[0];
+      const maxPoints = Number(qRow[4]) || 0;
+      const orig = origNums[idx];
+      let ans = '(미입력)';
+      let rec;
+
+      if (orig === null) {
+        // 제출 이후 새로 추가된 문항: 미응답 0점
+        rec = { status: 'X', earnedPoints: 0, maxPoints: maxPoints };
+      } else {
+        const col = oldColByQNum[orig];
+        if (col !== undefined && String(row[col]).trim() !== '') ans = String(row[col]).trim();
+        if (oldPerQ[orig]) {
+          rec = Object.assign({}, oldPerQ[orig], { maxPoints: maxPoints });
+        } else {
+          const evalRes = evaluateSingleQuestion(qRow, ans === '(미입력)' ? [] : ans.split(','), ignoreSpaces);
+          rec = { status: evalRes.status, earnedPoints: evalRes.earnedPoints, maxPoints: evalRes.points };
+        }
+      }
+
+      newPerQ[newQNum] = rec;
+      newAnswers.push(ans);
+      const pts = Number(rec.earnedPoints) || 0;
+      total += pts;
+      if (rec.status === '보류') hasPending = true;
+      summaryParts.push(`${newQNum}번:${rec.status}(${pts}점)`);
+    });
+
+    const wasCompleted = String(row[5]).toUpperCase() === 'TRUE';
+    output.push(pad([
+      '', '', '', // A~C열(제출일시/번호/이름)은 다시 쓰지 않음 (slice(3)으로 제외)
+      Math.round(total * 10) / 10,
+      summaryParts.join(' / '),
+      (wasCompleted || !hasPending) ? 'TRUE' : 'FALSE',
+      row[6],
+      JSON.stringify(newPerQ),
+      ...newAnswers
+    ]).slice(3));
+  }
+
+  // 답안 열이 숫자/날짜로 자동 변환되지 않도록 텍스트 서식 지정 후 D열부터 일괄 기록
+  resultSheet.getRange(2, 9, rRows.length - 1, width - 8).setNumberFormat('@');
+  resultSheet.getRange(1, 4, output.length, width - 3).setValues(output);
+  resultSheet.getRange(1, 1, 1, width).setBackground('#2d5a27').setFontColor('#ffffff').setFontWeight('bold');
 }
 
 function clearSubmissionRecords(passwordInput) {
