@@ -628,14 +628,15 @@
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) assertEq(cs.animationName, 'none');
     else assertTrue(cs.animationName !== 'none', 'animation ' + cs.animationName);
   }, { scenario: 'perfect' });
-  test('perfect: 이 기기에 저장한 답이 있으면 그 답을 칸별로 쓴다', async function () {
-    savedSubmission = { studentNumber: '1', studentName: '김하늘', examTitle: studentExamTitle, submittedAt: Date.now(), answers: { 1: ['1'], 2: ['3', '5'], 5: ['세종', '장영실'] } };
+  test('perfect: 이 기기에 저장한 답은 서버 답과 같을 때만 칸별로 쓴다', async function () {
+    // 스텁 서버 답: 1번 '3', 2번 '2, 4', 5번 '세종대왕/세종, 장영실'
+    savedSubmission = { studentNumber: '1', studentName: '김하늘', examTitle: studentExamTitle, submittedAt: Date.now(), answers: { 1: ['1'], 2: ['2', '4'], 5: ['세종대왕/세종', ' 장영실 '] } };
     var res = await serverCall('checkStudentResultStatus', { studentNumber: '1', studentName: '김하늘' });
     renderResult(res);
-    assertEq(pressedOf(1), ['1']);
-    assertEq(pressedOf(2), ['3', '5']);
+    assertEq(pressedOf(1), ['3'], '다르면 서버 답');
+    assertEq(pressedOf(2), ['2', '4']);
     var reads = Array.prototype.map.call(document.querySelectorAll('#studentAfter tr[data-row="5"] .answer-read'), function (e) { return e.textContent; });
-    assertEq(reads, ['세종', '장영실']);
+    assertEq(reads, ['세종대왕/세종', '장영실']);
     savedSubmission = null;
   }, { scenario: 'perfect' });
   test('perfect: 틀린 행에 정답(빨간 펜), 위험 문자는 글자 그대로', async function () {
@@ -783,6 +784,7 @@
     tById('tabGrade').click();
   }, { scenario: 'teacher' });
   test('teacher: 새로고침은 스크롤을 유지하고 현재 탭만 다시 그린다', async function () {
+    await sleep(60); // 앞 테스트에서 탭을 옮기며 보낸 새로고침 응답이 먼저 끝나게
     var calls = { grade: 0, results: 0, setup: 0 };
     var orig = { g: window.renderGradePanel, r: window.renderResultsPanel, s: window.renderSetupPanel };
     window.renderGradePanel = function () { calls.grade++; return orig.g.apply(this, arguments); };
@@ -1177,7 +1179,8 @@
     var input = cell.querySelector('.score-input');
     assertEq(input.getAttribute('aria-label'), '6번 박서연 부분점수');
     assertEq(input.getAttribute('placeholder'), '점');
-    assertEq(input.getAttribute('step'), '0.1');
+    assertEq(input.getAttribute('type'), 'text');
+    assertEq(input.getAttribute('inputmode'), 'decimal');
     var n0 = gradeCalls().length;
     markBtn(4, 6, '△').click();
     assertEq(document.activeElement, input);
@@ -1688,6 +1691,189 @@
     await sleep(400);
     window.__stubDelay = undefined;
   }, { scenario: 'teacher' });
+
+  // ===== 최종 검토 수정 =====
+  function toastOff() { var t = document.getElementById('toast'); t.classList.remove('show', 'error'); t.textContent = ''; }
+  test('final: 상단 줄 새로고침 단추로 새 제출이 보인다(성공 토스트 없음)', async function () {
+    await freshTeacher();
+    window.__stubDelay = 0;
+    var btn = document.querySelector('.t-top #refreshBtn');
+    assertTrue(!!btn, '#refreshBtn 이 .t-top 안에 있어야 함');
+    assertTrue(btn.classList.contains('btn-quiet'), 'btn-quiet');
+    assertEq(btn.textContent.trim(), '새로고침');
+    var n = teacherState.submissions.length;
+    await serverCall('submitStudentAnswers', { studentNumber: '9', studentName: '새학생', answers: {} });
+    assertEq(teacherState.submissions.length, n, '누르기 전에는 그대로');
+    toastOff();
+    btn.click();
+    await sleep(60);
+    assertEq(teacherState.submissions.length, n + 1);
+    assertTrue(tById('tCounts').textContent.indexOf('제출 ' + (n + 1) + '명') >= 0, tById('tCounts').textContent);
+    assertTrue(textsOf('#panelGrade .grade-table tbody td.who').indexOf('9 새학생') >= 0, '채점 표에 새 학생');
+    assertEq(tById('toast').classList.contains('show'), false, '성공 토스트 없음');
+    window.__stubDelay = undefined;
+  }, { scenario: 'teacher' });
+  test('final: 새로고침이 실패하면 오류 토스트', async function () {
+    await freshTeacher();
+    toastOff();
+    window.__stubReject.verifyTeacherAndGetData = true;
+    tById('refreshBtn').click();
+    await sleep(60);
+    window.__stubReject.verifyTeacherAndGetData = false;
+    assertEq(tById('toast').classList.contains('error'), true);
+    assertEq(tById('toast').textContent, '새로고침하지 못했어요. 연결을 확인해 주세요.');
+  }, { scenario: 'teacher' });
+  test('final: 탭을 누르면 새로고침해서 새 제출이 보인다', async function () {
+    await freshTeacher();
+    window.__stubDelay = 0;
+    var n = teacherState.submissions.length;
+    await serverCall('submitStudentAnswers', { studentNumber: '8', studentName: '탭학생', answers: {} });
+    var c0 = callsOf('verifyTeacherAndGetData').length;
+    tById('tabResults').click();
+    await sleep(60);
+    assertEq(callsOf('verifyTeacherAndGetData').length, c0 + 1);
+    assertEq(teacherState.submissions.length, n + 1);
+    assertTrue(tById('panelResults').textContent.indexOf('탭학생') >= 0, '명렬표에 새 학생');
+    tById('tabGrade').click();
+    await sleep(60);
+    assertTrue(textsOf('#panelGrade .grade-table tbody td.who').indexOf('8 탭학생') >= 0);
+    window.__stubDelay = undefined;
+  }, { scenario: 'teacher' });
+  test('final: 부분점수 칸은 글자 입력이고 abc 는 인라인 오류', async function () {
+    await freshTeacher();
+    window.__stubDelay = 0;
+    var cell = document.querySelector('#panelGrade .grade-cell');
+    var input = cell.querySelector('.score-input');
+    assertEq(input.getAttribute('type'), 'text');
+    assertEq(input.getAttribute('inputmode'), 'decimal');
+    var n = callsOf('updateStudentQuestionGrade').length;
+    input.focus();
+    input.value = 'abc';
+    enterOn(input);
+    await sleep(20);
+    var err = cell.querySelector('.score-error');
+    assertEq(err.hidden, false);
+    assertTrue(/^0에서 \d+(\.\d+)?점 사이 숫자를 써주세요$/.test(err.textContent), err.textContent);
+    assertEq(callsOf('updateStudentQuestionGrade').length, n);
+    input.value = '';
+    input.blur();
+    window.__stubDelay = undefined;
+  }, { scenario: 'teacher' });
+  test('final: 결과 공개 저장 중에는 설정 저장을 막고, 설정 저장 중에는 공개 스위치를 막는다', async function () {
+    await freshTeacher();
+    window.__stubDelay = 120;
+    switchTab('setup');
+    setVal(document.querySelector('#setupRows tr[data-idx="0"] [data-f="answer"]'), '4');
+    tById('publishSwitch').click();
+    assertTrue(publishing, '공개 저장 중');
+    document.getElementById('setupSaveBtn').click();
+    await sleep(10);
+    assertEq(callsOf('saveTeacherConfig').length, 0);
+    assertEq(document.getElementById('setupError').hidden, false);
+    assertEq(document.getElementById('setupError').textContent, '결과 공개 저장이 끝난 뒤에 다시 눌러주세요.');
+    await sleep(250);
+    assertEq(publishing, false);
+    // 반대 방향: 설정 저장 중 공개 스위치
+    document.getElementById('setupSaveBtn').click();
+    await sleep(10);
+    assertEq(callsOf('saveTeacherConfig').length, 1);
+    var p0 = callsOf('setPublishResultsStatus').length;
+    var before = tById('publishSwitch').checked;
+    tById('publishSwitch').click();
+    await sleep(10);
+    assertEq(callsOf('setPublishResultsStatus').length, p0, '설정 저장 중에는 공개를 보내지 않는다');
+    assertEq(tById('publishSwitch').checked, before, '스위치 되돌림');
+    await sleep(400);
+    window.__stubDelay = undefined;
+  }, { scenario: 'teacher' });
+  test('final: 설정을 저장하고 학생 화면으로 가면 쓰는 중인 답안지를 다시 불러온다', async function () {
+    await freshTeacher();
+    window.__stubDelay = 0;
+    // 저장 없이 나가면 다시 부르지 않는다
+    var g0 = callsOf('getStudentInitData').length;
+    tById('toStudentBtn').click();
+    await sleep(40);
+    assertEq(callsOf('getStudentInitData').length, g0);
+    await teacherLogin();
+    switchTab('setup');
+    document.getElementById('addQuestionBtn').click();
+    document.getElementById('setupSaveBtn').click();
+    await sleep(80);
+    assertEq(callsOf('saveTeacherConfig').length, 1);
+    assertEq(studentPhase, 'writing');
+    tById('toStudentBtn').click();
+    await sleep(80);
+    assertEq(callsOf('getStudentInitData').length, g0 + 1);
+    assertEq(document.querySelectorAll('#answerTable tbody tr').length, 7);
+    // 한 번 다시 불렀으면 다음 나가기에서는 부르지 않는다
+    await teacherLogin();
+    tById('toStudentBtn').click();
+    await sleep(40);
+    assertEq(callsOf('getStudentInitData').length, g0 + 1);
+    window.__stubReset();
+    await loadStudentScreen();
+    window.__stubDelay = undefined;
+  }, { scenario: 'teacher' });
+  test('final: 선생님 화면 글자는 13px 이상', async function () {
+    await freshTeacher();
+    window.__stubDelay = 0;
+    var small = [];
+    function scan(root) {
+      Array.prototype.forEach.call(root.querySelectorAll('*'), function (el) {
+        if (el.closest('.visually-hidden')) return;
+        var own = Array.prototype.some.call(el.childNodes, function (n) { return n.nodeType === 3 && n.textContent.trim(); });
+        if (!own || !el.getClientRects().length) return;
+        var fs = parseFloat(getComputedStyle(el).fontSize);
+        if (fs < 13) small.push((el.className || el.tagName) + ':' + fs);
+      });
+    }
+    document.querySelector('#qPicker button[data-qnum="1"]').click();
+    scan(tById('teacherView'));
+    teacherState.gradeView = 'byStudent';
+    renderGradePanel();
+    scan(tById('teacherView'));
+    ['results', 'setup'].forEach(function (t) { switchTab(t); scan(tById('teacherView')); });
+    var keys = {};
+    small = small.filter(function (s) { if (keys[s]) return false; keys[s] = 1; return true; });
+    assertEq(small, []);
+    assertTrue(parseFloat(getComputedStyle(document.querySelector('.pw-label')).fontSize) >= 13, '.pw-label');
+    window.__stubDelay = undefined;
+  }, { scenario: 'teacher' });
+  function readsOf(row) {
+    return Array.prototype.map.call(document.querySelectorAll('#studentAfter tr[data-row="' + row + '"] .answer-read'), function (e) { return e.textContent; });
+  }
+  test('final: 저장한 답은 서버 답과 같을 때만 칸별로 쓰고, 다르면 서버 답을 쓴다', async function () {
+    savedSubmission = { studentNumber: '1', studentName: '김하늘', examTitle: studentExamTitle, submittedAt: Date.now(),
+      answers: { 1: ['1'], 2: ['4', '2'], 5: ['세종, 대왕', '장영실'], 6: ['  서술 답  '] } };
+    function det(qNum, qType, ua, max) { return { qNum: qNum, qType: qType, userAnswer: ua, status: 'O', earnedPoints: max, maxPoints: max, correctAnswer: null }; }
+    renderResult({
+      published: true, studentNumber: '1', studentName: '김하늘', showScore: true, showCorrectAnswers: false,
+      totalScore: 0, maxScore: 30, isPerfectScore: false, teacherComment: '',
+      details: [det(1, '객관식', '4', 5), det(2, '객관식', '4, 2', 10), det(5, '단답식', '세종, 대왕, 장영실', 10), det(6, '서술형', '서술 답', 10)]
+    });
+    assertEq(pressedOf(1), ['4'], '1번: 저장한 답(1)과 서버 답(4)이 다르면 서버 답');
+    assertEq(pressedOf(2), ['4', '2'], '2번: 같으면 저장한 칸 순서');
+    assertEq(readsOf(5), ['세종, 대왕', '장영실'], '5번: 같으면 칸 안의 쉼표도 그대로');
+    assertEq(readsOf(6), ['서술 답'], '6번 서술형');
+    // 빈칸 자리: 저장한 ['', '장영실'] 과 서버 ', 장영실' 은 같다
+    savedSubmission.answers = { 5: ['', '장영실'], 2: ['', ''] };
+    renderResult({
+      published: true, studentNumber: '1', studentName: '김하늘', showScore: true, showCorrectAnswers: false,
+      totalScore: 0, maxScore: 20, isPerfectScore: false, teacherComment: '',
+      details: [det(2, '객관식', '(미입력)', 10), det(5, '단답식', ', 장영실', 10)]
+    });
+    assertEq(pressedOf(2), [], '2번 모두 빈칸');
+    assertEq(readsOf(5), ['', '장영실'], '빈칸 자리 유지');
+    // 다르면 서버 문자열을 나눈다
+    savedSubmission.answers = { 5: ['세종', '장영실'] };
+    renderResult({
+      published: true, studentNumber: '1', studentName: '김하늘', showScore: true, showCorrectAnswers: false,
+      totalScore: 0, maxScore: 10, isPerfectScore: false, teacherComment: '',
+      details: [det(5, '단답식', '훈민정음, 한글', 10)]
+    });
+    assertEq(readsOf(5), ['훈민정음', '한글'], '다르면 서버 문자열을 나눈다');
+    savedSubmission = null;
+  }, { scenario: 'perfect' });
 
   // ===== 실행 =====
   async function runAll() {

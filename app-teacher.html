@@ -14,6 +14,8 @@
   var verifying = false;
   var loginSeq = 0;
   var publishing = false;
+  // 정답과 설정을 저장했으면 학생 화면으로 돌아갈 때 쓰는 중인 답안지를 다시 불러온다
+  var studentReloadNeeded = false;
 
   var TAB_IDS = { grade: 'tabGrade', results: 'tabResults', setup: 'tabSetup' };
   var PANEL_IDS = { grade: 'panelGrade', results: 'panelResults', setup: 'panelSetup' };
@@ -123,6 +125,10 @@
     tEl('publishSwitch').checked = false;
     ['panelGrade', 'panelResults', 'panelSetup'].forEach(function (id) { tEl(id).innerHTML = ''; });
     setMode('student');
+    if (studentReloadNeeded) {
+      studentReloadNeeded = false;
+      if (typeof loadStudentScreen === 'function' && studentPhase === 'writing') loadStudentScreen();
+    }
   }
 
   // ----- 상단 줄 -----
@@ -139,6 +145,11 @@
   async function togglePublish(checked) {
     var sw = tEl('publishSwitch');
     if (publishing) { renderTopBar(); return; } // 처리 중에 또 눌러도 서버에는 한 번만
+    if (setupDraft && setupDraft.saving) { // 설정 저장이 공개 값을 덮지 않게 끝날 때까지 기다린다
+      renderTopBar();
+      showToast('설정 저장이 끝난 뒤에 다시 눌러주세요.', 'error');
+      return;
+    }
     publishing = true;
     sw.setAttribute('aria-busy', 'true'); // disabled 로 막으면 키보드 포커스를 잃는다
     var session = teacherSession;
@@ -193,6 +204,7 @@
     e.preventDefault();
     switchTab(TAB_ORDER[next]);
     tEl(TAB_IDS[TAB_ORDER[next]]).focus();
+    refreshTeacherData();
   }
 
   // ----- 채점 탭 -----
@@ -228,6 +240,7 @@
   // 채점 저장이 진행 중인 개수: 0이 아니면 기록 지우기와 설정 저장을 미룬다
   var gradeInflight = 0;
   var GRADE_BUSY_NOTE = '채점 저장이 끝난 뒤에 다시 눌러주세요.';
+  var PUBLISH_BUSY_NOTE = '결과 공개 저장이 끝난 뒤에 다시 눌러주세요.';
   // 기록이 바뀐 뒤(지우기, 문항 저장): 행 번호와 문항 번호로 묶인 채점 기억을 비운다
   function resetGradeBook() {
     gradeCells = {}; gradeRows = {}; commentDrafts = {};
@@ -349,7 +362,7 @@
     return '<div class="grade-cell" data-row="' + Number(sub.rowIndex) + '" data-q="' + Number(q.qNum) + '">' +
       '<span class="mark-cells" role="group" aria-label="' + escapeHtml(label + ' 채점') + '">' +
       btn('O') + btn('△') +
-      '<input type="number" class="score-input" step="0.1" min="0" max="' + max + '" inputmode="decimal" placeholder="점"' +
+      '<input type="text" class="score-input" inputmode="decimal" autocomplete="off" placeholder="점"' +
       ' aria-label="' + escapeHtml(label + ' 부분점수') + '" value="' + (st === '△' ? fmtScore(eff.earned) : '') + '">' +
       btn('X') + '</span>' +
       '<p class="inline-error score-error" role="alert" hidden></p></div>';
@@ -1069,9 +1082,10 @@
   async function saveSetup() {
     var d = setupDraft;
     if (!d || d.saving) return;
-    if (gradeInflight > 0) {
+    // 채점·결과 공개 저장이 끝나기 전에는 보내지 않는다 (설정 저장은 결과 공개 값도 다시 쓴다)
+    if (gradeInflight > 0 || publishing) {
       var busy = tEl('setupError');
-      busy.textContent = GRADE_BUSY_NOTE;
+      busy.textContent = publishing ? PUBLISH_BUSY_NOTE : GRADE_BUSY_NOTE;
       busy.hidden = false;
       return;
     }
@@ -1124,6 +1138,7 @@
       return { qNum: q.qNum, qType: q.qType, blankCount: blankCountOfDraft(q), rawAnswerStr: q.rawAnswerStr, points: q.points, partialCredit: q.partialCredit };
     });
     setupDraft = null;
+    studentReloadNeeded = true;
     resetGradeBook();
     renderTopBar();
     if (teacherState.tab === 'setup') { renderSetupPanel(); tEl('setupSaveBtn').focus(); }
@@ -1142,11 +1157,14 @@
   // ----- 이벤트 -----
   tEl('tabGrade').parentNode.addEventListener('click', function (e) {
     var btn = e.target.closest('[data-tab]');
-    if (btn) switchTab(btn.getAttribute('data-tab'));
+    if (!btn) return;
+    switchTab(btn.getAttribute('data-tab'));
+    refreshTeacherData(); // 탭을 옮길 때마다 새 제출을 불러온다
   });
   tEl('tabGrade').parentNode.addEventListener('keydown', onTabKeydown);
   tEl('publishSwitch').addEventListener('change', function (e) { togglePublish(e.target.checked); });
   tEl('toStudentBtn').addEventListener('click', leaveTeacherMode);
+  tEl('refreshBtn').addEventListener('click', function () { refreshTeacherData(); });
   tEl('panelGrade').addEventListener('click', onGradeClick);
   tEl('panelGrade').addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && e.target.classList.contains('score-input')) { e.preventDefault(); commitScore(e.target); }

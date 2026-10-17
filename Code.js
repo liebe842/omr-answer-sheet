@@ -902,7 +902,6 @@ function remapSubmissionsToQuestions(questions, rowsToWrite) {
     const newPerQ = {};
     const newAnswers = [];
     let total = 0;
-    let hasPending = false;
     const summaryParts = [];
 
     rowsToWrite.forEach((qRow, idx) => {
@@ -930,16 +929,16 @@ function remapSubmissionsToQuestions(questions, rowsToWrite) {
       newAnswers.push(ans);
       const pts = Number(rec.earnedPoints) || 0;
       total += pts;
-      if (rec.status === '보류') hasPending = true;
       summaryParts.push(`${newQNum}번:${rec.status}(${pts}점)`);
     });
 
+    // 완료는 '채점 끝'에서만 바뀐다: 문항을 고쳐 저장해도 이전 완료 상태를 그대로 둔다 (보류가 없어졌다고 학생에게 공개되지 않게)
     const wasCompleted = String(row[5]).toUpperCase() === 'TRUE';
     output.push(pad([
       '', '', '', // A~C열(제출일시/번호/이름)은 다시 쓰지 않음 (slice(3)으로 제외)
       Math.round(total * 10) / 10,
       summaryParts.join(' / '),
-      (wasCompleted || !hasPending) ? 'TRUE' : 'FALSE',
+      wasCompleted ? 'TRUE' : 'FALSE',
       row[6],
       JSON.stringify(newPerQ),
       ...newAnswers

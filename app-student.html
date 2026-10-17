@@ -390,11 +390,22 @@
   }
 
   // ===== ③ 채점 결과 =====
-  // 칸별 답: 이 기기에 저장한 답을 먼저, 없으면 서버가 돌려준 문자열을 쉼표로 나눈다
+  // 서버가 답 열에 적는 모양 (Code.js evaluateSingleQuestion_ 의 userDisplayStr 와 같게):
+  // 칸마다 앞뒤 공백을 지우고, 하나라도 쓴 칸이 있으면 모든 칸을 ', ' 로 잇고, 모두 비면 '(미입력)'. 서술형은 첫 칸만
+  function serverAnswerText(arr, isEssay) {
+    var blanks = (arr || []).map(function (x) { return String(x === null || x === undefined ? '' : x).trim(); });
+    if (isEssay) return blanks[0] || '(미입력)';
+    return blanks.some(function (x) { return x !== ''; }) ? blanks.join(', ') : '(미입력)';
+  }
+
+  // 칸별 답: 이 기기에 저장한 답이 서버 답과 같을 때만 그것을 쓰고(칸 안의 쉼표·빈칸 자리 유지),
+  // 다르면(선생님이 문항을 지우거나 순서를 바꿈) 서버가 돌려준 문자열을 쉼표로 나눈다
   function answersForResult(d, n) {
-    var saved = savedSubmission && savedSubmission.answers ? savedSubmission.answers[d.qNum] : null;
-    if (Array.isArray(saved)) return saved;
     var text = String(d.userAnswer === null || d.userAnswer === undefined ? '' : d.userAnswer);
+    var saved = savedSubmission && savedSubmission.answers ? savedSubmission.answers[d.qNum] : null;
+    if (Array.isArray(saved) && serverAnswerText(saved, d.qType === '서술형') === text.trim()) {
+      return saved.map(function (x) { return String(x === null || x === undefined ? '' : x).trim(); });
+    }
     if (n <= 1) return [text];
     var parts = text.split(',').map(function (x) { return x.trim(); });
     if (parts.length > n) parts = parts.slice(0, n - 1).concat([parts.slice(n - 1).join(', ')]);
