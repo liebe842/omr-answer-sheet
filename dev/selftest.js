@@ -1426,6 +1426,227 @@
     assertTrue(document.querySelector('#gradeSheet').closest('.table-wrap') !== null);
   }, { scenario: 'teacher' });
 
+  // ===== Task 7: 결과 보기 / 정답과 설정 =====
+  async function freshTeacher() {
+    window.__stubReset();
+    window.__stubFailQueue = {};
+    window.__gasCalls.length = 0;
+    await teacherLogin();
+  }
+  function callsOf(fn) { return window.__gasCalls.filter(function (c) { return c.fn === fn; }); }
+  function setVal(el, v) { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); }
+
+  test('results: 잉크 막대 수는 서술형이 아닌 문항 수와 같다', async function () {
+    await freshTeacher();
+    switchTab('results');
+    var nonEssay = teacherState.stats.filter(function (s) { return s.qType !== '서술형'; }).length;
+    assertTrue(nonEssay > 0 && nonEssay < teacherState.stats.length);
+    assertEq(document.querySelectorAll('#panelResults .ink-bar').length, nonEssay);
+    assertTrue(document.querySelector('#panelResults .table-wrap .stat-table') !== null, '오답 표는 .table-wrap 안');
+    assertTrue(/\d+명 \(\d+(\.\d)?%\)/.test(document.querySelector('#panelResults .stat-table tbody tr').textContent));
+    assertTrue(document.querySelector('#panelResults .table-wrap .roster-all') !== null, '제출 명렬표');
+  }, { scenario: 'teacher' });
+  test('results: 제출이 없으면 안내 문장을 보인다', async function () {
+    await freshTeacher();
+    teacherState.stats = teacherState.stats.map(function (s) { return Object.assign({}, s, { totalCount: 0, wrongCount: 0, errorRate: 0 }); });
+    teacherState.submissions = [];
+    switchTab('results');
+    assertTrue(document.getElementById('panelResults').textContent.indexOf('제출이 쌓이면 문항별로 틀린 학생 수가 나와요.') >= 0);
+    assertEq(document.querySelectorAll('#panelResults .ink-bar').length, 0);
+  }, { scenario: 'teacher' });
+  test('results: 이름의 꺾쇠와 따옴표는 글자 그대로 보인다', async function () {
+    await freshTeacher();
+    teacherState.submissions[0].studentName = '<img src=x onerror=alert(1)>"\'';
+    teacherState.submissions[0].summary = '<b>요약</b>';
+    switchTab('results');
+    renderResultsPanel();
+    assertEq(document.querySelectorAll('#panelResults img, #panelResults b').length, 0);
+    assertTrue(document.getElementById('panelResults').textContent.indexOf('<img src=x onerror=alert(1)>"\'') >= 0);
+  }, { scenario: 'teacher' });
+  test('results: 기록 지우기는 첫 클릭에 서버 호출이 없고 두 번째에 호출한다', async function () {
+    await freshTeacher();
+    switchTab('results');
+    document.getElementById('clearRecordsBtn').click();
+    assertEq(callsOf('clearSubmissionRecords').length, 0);
+    assertTrue(document.getElementById('panelResults').textContent.indexOf('정말 지울까요? 되돌릴 수 없어요.') >= 0);
+    var cancel = document.getElementById('clearCancelBtn');
+    assertTrue(cancel !== null);
+    cancel.click();
+    assertEq(callsOf('clearSubmissionRecords').length, 0);
+    assertTrue(document.getElementById('clearRecordsBtn') !== null);
+    document.getElementById('clearRecordsBtn').click();
+    document.getElementById('clearConfirmBtn').click();
+    await sleep(150);
+    assertEq(callsOf('clearSubmissionRecords').length, 1);
+    assertEq(callsOf('clearSubmissionRecords')[0].payload, '1234');
+    assertEq(teacherState.submissions.length, 0);
+    assertEq(document.getElementById('toast').textContent, '제출 기록을 모두 지웠어요.');
+  }, { scenario: 'teacher' });
+  test('results: 기록 지우기 실패는 오류 토스트를 보이고 기록이 남는다', async function () {
+    await freshTeacher();
+    var n = teacherState.submissions.length;
+    switchTab('results');
+    window.__stubFailQueue = { clearSubmissionRecords: [true] };
+    document.getElementById('clearRecordsBtn').click();
+    document.getElementById('clearConfirmBtn').click();
+    await sleep(150);
+    assertEq(teacherState.submissions.length, n);
+    assertTrue(document.getElementById('toast').classList.contains('error'));
+  }, { scenario: 'teacher' });
+
+  test('setup: 저장 payload 는 omrTheme blue, 새 문항 origQNum null, 기존 문항 origQNum 유지', async function () {
+    await freshTeacher();
+    switchTab('setup');
+    var n = teacherState.questions.length;
+    document.getElementById('addQuestionBtn').click();
+    assertEq(document.querySelectorAll('#setupRows tr').length, n + 1);
+    document.getElementById('setupSaveBtn').click();
+    await sleep(200);
+    var call = callsOf('saveTeacherConfig')[0];
+    assertTrue(!!call, 'saveTeacherConfig 호출');
+    assertEq(call.payload.settings.omrTheme, 'blue');
+    assertEq(call.payload.authPassword, '1234');
+    assertEq(call.payload.settings.teacherPassword, '1234');
+    assertEq(call.payload.questions.length, n + 1);
+    assertEq(call.payload.questions[n].origQNum, null);
+    assertEq(call.payload.questions[n].qType, '객관식');
+    assertEq(call.payload.questions[n].rawAnswerStr, '1');
+    assertEq(call.payload.questions[n].points, 20);
+    assertEq(call.payload.questions[0].origQNum, 1);
+    assertEq(call.payload.questions[2].qNum, 3);
+    assertEq(document.getElementById('toast').textContent, '저장했어요');
+    assertEq(teacherState.questions.length, n + 1);
+    assertEq(document.querySelectorAll('#setupRows tr').length, n + 1);
+    assertEq(document.getElementById('setupDirty').hidden, true);
+  }, { scenario: 'teacher' });
+  test('setup: 테마 칩이 없다', async function () {
+    await freshTeacher();
+    switchTab('setup');
+    var p = document.getElementById('panelSetup');
+    assertEq(p.querySelectorAll('[data-theme], .theme-chip, .theme-btn').length, 0);
+    assertEq(p.textContent.indexOf('테마'), -1);
+  }, { scenario: 'teacher' });
+  test('setup: 정답 입력 중 칸 수 셀만 갱신하고 입력 포커스를 유지한다', async function () {
+    await freshTeacher();
+    switchTab('setup');
+    var row = document.querySelector('#setupRows tr[data-idx="0"]');
+    var input = row.querySelector('[data-f="answer"]');
+    input.focus();
+    setVal(input, '2, 4');
+    assertEq(row.querySelector('.blank-count').textContent.trim(), '2칸');
+    assertTrue(document.activeElement === input, '포커스 유지');
+    assertTrue(document.querySelector('#setupRows tr[data-idx="0"] [data-f="answer"]') === input, '같은 입력 요소');
+    setVal(input, '2, 4, 5');
+    assertEq(row.querySelector('.blank-count').textContent.trim(), '3칸');
+    assertEq(document.getElementById('setupDirty').hidden, false);
+  }, { scenario: 'teacher' });
+  test('setup: 유형을 바꾸면 그 행만 다시 그리고 선택 상자에 포커스가 남는다', async function () {
+    await freshTeacher();
+    switchTab('setup');
+    var other = document.querySelector('#setupRows tr[data-idx="1"]');
+    var sel = document.querySelector('#setupRows tr[data-idx="0"] [data-f="type"]');
+    sel.focus();
+    setVal(sel, '서술형');
+    assertTrue(document.querySelector('#setupRows tr[data-idx="1"]') === other, '다른 행은 그대로');
+    assertEq(document.querySelector('#setupRows tr[data-idx="0"] .blank-count').textContent.trim(), '1칸');
+    assertEq(document.activeElement.getAttribute('data-f'), 'type');
+    assertEq(document.activeElement.value, '서술형');
+  }, { scenario: 'teacher' });
+  test('setup: 저장하지 않은 편집은 다른 곳의 새로고침에도 남는다', async function () {
+    await freshTeacher();
+    switchTab('setup');
+    setVal(document.querySelector('#setupRows tr[data-idx="0"] [data-f="answer"]'), '5');
+    await refreshTeacherData();
+    assertEq(document.querySelector('#setupRows tr[data-idx="0"] [data-f="answer"]').value, '5');
+    assertEq(document.getElementById('setupDirty').hidden, false);
+    assertTrue(document.getElementById('setupDirty').textContent.indexOf('저장하지 않은 변경이 있어요') >= 0);
+    switchTab('results');
+    switchTab('setup');
+    assertEq(document.querySelector('#setupRows tr[data-idx="0"] [data-f="answer"]').value, '5');
+  }, { scenario: 'teacher' });
+  test('setup: 마지막 한 문항은 지울 수 없고 인라인 안내를 보인다', async function () {
+    await freshTeacher();
+    switchTab('setup');
+    var n = teacherState.questions.length;
+    for (var i = 0; i < n - 1; i++) document.querySelector('#setupRows [data-del]').click();
+    assertEq(document.querySelectorAll('#setupRows tr').length, 1);
+    document.querySelector('#setupRows [data-del]').click();
+    assertEq(document.querySelectorAll('#setupRows tr').length, 1);
+    assertTrue(document.getElementById('panelSetup').textContent.indexOf('문항은 하나 이상 있어야 해요.') >= 0);
+  }, { scenario: 'teacher' });
+  test('setup: 문항을 지우면 번호가 위치대로 매겨지고 저장 payload 에 origQNum 이 남는다', async function () {
+    await freshTeacher();
+    switchTab('setup');
+    document.querySelector('#setupRows tr[data-idx="1"] [data-del]').click();
+    document.getElementById('setupSaveBtn').click();
+    await sleep(200);
+    var qs = callsOf('saveTeacherConfig')[0].payload.questions;
+    assertEq(qs.map(function (q) { return q.qNum; }), [1, 2, 3, 4, 5]);
+    assertEq(qs.map(function (q) { return q.origQNum; }), [1, 3, 4, 5, 6]);
+  }, { scenario: 'teacher' });
+  test('setup: 비밀번호를 비워 두면 현재 비밀번호를 유지하고, 새로 적으면 반영한다', async function () {
+    await freshTeacher();
+    switchTab('setup');
+    setVal(document.getElementById('cfgTeacherPw'), '');
+    document.getElementById('setupSaveBtn').click();
+    await sleep(200);
+    assertEq(callsOf('saveTeacherConfig')[0].payload.settings.teacherPassword, '1234');
+    switchTab('setup');
+    setVal(document.getElementById('cfgTeacherPw'), '5678');
+    document.getElementById('setupSaveBtn').click();
+    await sleep(200);
+    assertEq(callsOf('saveTeacherConfig')[1].payload.settings.teacherPassword, '5678');
+    assertEq(teacherState.pw, '5678');
+    assertEq(callsOf('verifyTeacherAndGetData').pop().payload, '5678');
+    window.__stubReset();
+  }, { scenario: 'teacher' });
+  test('setup: 스위치 4개와 규칙 두 줄, 시험 제목을 비우면 기본 제목', async function () {
+    await freshTeacher();
+    switchTab('setup');
+    var labels = Array.prototype.map.call(document.querySelectorAll('#panelSetup .ink-switch'), function (l) { return l.textContent.replace(/\s+/g, ' ').trim(); });
+    assertEq(labels.length, 4);
+    ['점수와 ○/ 보여주기', '틀린 문제 정답 보여주기', '띄어쓰기 무시하고 채점', '다시 내기 허용'].forEach(function (t, i) {
+      assertTrue(labels[i].indexOf(t) >= 0, t + ' / ' + labels[i]);
+    });
+    var text = document.getElementById('panelSetup').textContent;
+    assertTrue(text.indexOf('쉼표(,)로 나누면 빈칸이 늘어나요. 예: 2, 4') >= 0);
+    assertTrue(text.indexOf('빗금(/)으로 묶으면 둘 다 정답이에요. 예: 훈민정음/한글') >= 0);
+    setVal(document.getElementById('cfgExamTitle'), '  ');
+    document.getElementById('setupSaveBtn').click();
+    await sleep(200);
+    assertEq(callsOf('saveTeacherConfig')[0].payload.settings.examTitle, '우리들의 답안지');
+    assertEq(callsOf('saveTeacherConfig')[0].payload.settings.publishResults, false);
+  }, { scenario: 'teacher' });
+  test('setup: 저장 실패는 오류 토스트를 보이고 편집이 남는다', async function () {
+    await freshTeacher();
+    switchTab('setup');
+    setVal(document.querySelector('#setupRows tr[data-idx="0"] [data-f="answer"]'), '4');
+    window.__stubFailQueue = { saveTeacherConfig: [true] };
+    document.getElementById('setupSaveBtn').click();
+    await sleep(200);
+    assertTrue(document.getElementById('toast').classList.contains('error'));
+    assertEq(document.querySelector('#setupRows tr[data-idx="0"] [data-f="answer"]').value, '4');
+    assertEq(document.getElementById('setupDirty').hidden, false);
+    assertEq(document.getElementById('setupSaveBtn').disabled, false);
+  }, { scenario: 'teacher' });
+  test('setup: 배점을 비우면 저장하지 않고 그 행에 인라인 오류를 보인다', async function () {
+    await freshTeacher();
+    switchTab('setup');
+    setVal(document.querySelector('#setupRows tr[data-idx="0"] [data-f="points"]'), '');
+    document.getElementById('setupSaveBtn').click();
+    await sleep(80);
+    assertEq(callsOf('saveTeacherConfig').length, 0);
+    assertTrue(document.querySelector('#setupRows tr[data-idx="0"] .inline-error') !== null);
+  }, { scenario: 'teacher' });
+
+  test('results/setup: 가로 스크롤이 페이지에 생기지 않는다', async function () {
+    await freshTeacher();
+    ['results', 'setup'].forEach(function (t) {
+      switchTab(t);
+      assertTrue(document.documentElement.scrollWidth <= window.innerWidth, t + ' ' + document.documentElement.scrollWidth + ' > ' + window.innerWidth);
+    });
+  }, { scenario: 'teacher' });
+
   // ===== 실행 =====
   async function runAll() {
     var result = { pass: 0, fail: 0, failures: [] };

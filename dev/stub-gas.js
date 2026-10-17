@@ -119,6 +119,7 @@
   }
   // 처음 상태로 되돌리기 (셀프테스트가 앞 테스트의 채점 흔적 없이 시작할 때)
   window.__stubReset = function () {
+    TEACHER_PW = '1234';
     state = newState();
     if (scenario === 'teacher') seedTeacherRows();
   };
@@ -136,11 +137,11 @@
     },
     submitStudentAnswers: function (p) {
       var number = String(p.studentNumber || '').trim(), name = String(p.studentName || '').trim();
-      if (!number || !name) return { success: false, message: '출석번호와 이름을 모두 입력해 주세요!' };
+      if (!number || !name) return { success: false, message: '출석번호와 이름을 모두 적어 주세요.' };
       if (!state.settings.allowResubmit) {
         for (var i = 0; i < state.rows.length; i++) {
           if (state.rows[i].number === number && state.rows[i].name === name) {
-            return { success: false, message: number + '번 ' + name + ' 학생은 이미 답안지를 제출했습니다!' };
+            return { success: false, message: number + '번 ' + name + ' 학생은 이미 답안지를 냈어요.' };
           }
         }
       }
@@ -252,7 +253,7 @@
       row.total = total;
       row.complete = isCompleted;
       if (p.teacherComment !== undefined) row.comment = String(p.teacherComment).trim();
-      return { success: true, newTotalScore: total, isCompleted: isCompleted, message: '채점 내역과 총점이 자동으로 합산되어 저장되었습니다!' };
+      return { success: true, newTotalScore: total, isCompleted: isCompleted, message: '채점을 저장했어요.' };
     },
     setPublishResultsStatus: function (p) {
       if (String(p.authPassword).trim() !== TEACHER_PW) return { success: false, message: '권한이 없습니다.' };
@@ -271,12 +272,13 @@
       state.questions = (p.questions || []).map(function (q, idx) {
         return { qNum: idx + 1, qType: q.qType, rawAnswerStr: String(q.rawAnswerStr || '').trim(), points: Number(q.points) || 0, partialCredit: q.partialCredit === true };
       });
-      return { success: true, message: '설정과 정답지가 구글 시트(드롭다운 및 C열 자동 계산 수식 포함)에 완벽히 반영되었습니다!' };
+      TEACHER_PW = state.settings.teacherPassword;
+      return { success: true, message: '저장했어요.' };
     },
     clearSubmissionRecords: function (pw) {
       if (String(pw).trim() !== TEACHER_PW) return { success: false, message: '비밀번호가 일치하지 않습니다.' };
       state.rows = [];
-      return { success: true, message: '모든 제출 기록이 초기화되었습니다.' };
+      return { success: true, message: '제출 기록을 모두 지웠어요.' };
     }
   };
 

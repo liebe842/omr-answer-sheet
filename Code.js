@@ -365,14 +365,14 @@ function submitStudentAnswers(payload) {
     const studentAnswers = payload.answers || {};
     
     if (!studentNumber || !studentName) {
-      return { success: false, message: '출석번호와 이름을 모두 입력해 주세요!' };
+      return { success: false, message: '출석번호와 이름을 모두 적어 주세요.' };
     }
     
     if (!settings.allowResubmit) {
       const resultData = resultSheet.getDataRange().getValues();
       for (let i = 1; i < resultData.length; i++) {
         if (String(resultData[i][1]).trim() === studentNumber && String(resultData[i][2]).trim() === studentName) {
-          return { success: false, message: `${studentNumber}번 ${studentName} 학생은 이미 답안지를 제출했습니다!` };
+          return { success: false, message: `${studentNumber}번 ${studentName} 학생은 이미 답안지를 냈어요.` };
         }
       }
     }
@@ -735,7 +735,7 @@ function updateStudentQuestionGrade(payload) {
       success: true,
       newTotalScore: newTotalScore,
       isCompleted: isCompleted,
-      message: '채점 내역과 총점이 자동으로 합산되어 저장되었습니다!'
+      message: '채점을 저장했어요.'
     };
   } catch (err) {
     return { success: false, message: '채점 저장 오류: ' + err.message };
@@ -848,7 +848,7 @@ function saveTeacherConfig(payload) {
     // 문항 삭제/순서 변경/추가 시 기존 제출 답안과 채점 기록을 새 문항 번호에 맞게 이동
     remapSubmissionsToQuestions(questions, rowsToWrite);
 
-    return { success: true, message: '설정과 정답지가 구글 시트(드롭다운 및 C열 자동 계산 수식 포함)에 완벽히 반영되었습니다!' };
+    return { success: true, message: '저장했어요.' };
   } catch (err) {
     return { success: false, message: '저장 오류: ' + err.message };
   } finally {
@@ -966,7 +966,7 @@ function clearSubmissionRecords(passwordInput) {
     if (lastRow > 1) {
       resultSheet.deleteRows(2, lastRow - 1);
     }
-    return { success: true, message: '모든 제출 기록이 초기화되었습니다.' };
+    return { success: true, message: '제출 기록을 모두 지웠어요.' };
   } catch (err) {
     return { success: false, message: '초기화 오류: ' + err.message };
   } finally {

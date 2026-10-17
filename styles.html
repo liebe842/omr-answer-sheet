@@ -404,6 +404,46 @@
   .finish-buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
   .finish-warn { margin: 0 0 10px; text-align: left; }
 
+  /* 결과 보기, 정답과 설정 탭 */
+  .panel-h { font-size: 16px; margin: 0 0 8px; }
+  .panel-h:not(:first-child) { margin-top: 26px; }
+  .nowrap { white-space: nowrap; }
+  .stat-table td, .roster-all td { font-size: 13px; }
+  .roster-all td:last-child { min-width: 320px; }
+  .ink-track { display: inline-block; width: 140px; max-width: 45%; height: 10px; vertical-align: middle; margin-right: 8px; }
+  .ink-bar { display: block; height: 10px; background: var(--ink); }
+  .bar-text { vertical-align: middle; white-space: nowrap; }
+  .clear-area { margin-top: 28px; padding-top: 14px; border-top: 1px solid var(--ink); }
+  .clear-ask { margin: 0 0 8px; font-weight: 700; }
+  .clear-btns { display: flex; flex-wrap: wrap; gap: 8px; }
+  .rule-line { margin: 0 0 2px; font-size: 13px; color: var(--ink-soft); }
+  .setup-fields { margin: 0; padding: 0; border: 0; min-width: 0; }
+  .setup-fields:disabled { opacity: .6; }
+  .setup-table { margin-top: 10px; }
+  .setup-table th, .setup-table td { white-space: nowrap; }
+  .setup-table td.blank-count { text-align: center; font-size: 12px; }
+  .setup-table td.center { text-align: center; }
+  .setup-table td:nth-child(4) { min-width: 200px; white-space: normal; }
+  .setup-answer { width: 100%; min-width: 0; font-size: 14px; }
+  .setup-points { width: 64px; min-width: 0; text-align: center; font-size: 14px; }
+  .setup-select {
+    min-height: 36px;
+    padding: 4px 6px;
+    border: 1px solid var(--ink);
+    border-radius: 0;
+    background: var(--paper-lift);
+    color: var(--ink);
+    font: 400 14px var(--font-body);
+  }
+  .setup-check { width: 22px; height: 22px; margin: 0; accent-color: var(--ink); cursor: pointer; }
+  .setup-table .link-quiet { min-height: 36px; padding: 4px 6px; }
+  .setup-add { margin: 12px 0 0; }
+  .setup-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 24px; margin-bottom: 8px; }
+  .setup-field .line-input { width: 100%; }
+  .setup-switches { display: flex; flex-wrap: wrap; gap: 0 28px; }
+  .setup-dirty { margin: 14px 0 0; font-size: 13px; font-weight: 700; }
+  .setup-save { margin: 12px 0 0; }
+
   /* 비밀번호 쪽지 */
   .modal-backdrop {
     position: fixed;

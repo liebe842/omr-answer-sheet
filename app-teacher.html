@@ -118,6 +118,8 @@
   function leaveTeacherMode() {
     teacherSession++;
     Object.assign(teacherState, newTeacherState());
+    clearAsked = false;
+    setupDraft = null;
     tEl('publishSwitch').checked = false;
     ['panelGrade', 'panelResults', 'panelSetup'].forEach(function (id) { tEl(id).innerHTML = ''; });
     setMode('student');
@@ -191,14 +193,6 @@
     e.preventDefault();
     switchTab(TAB_ORDER[next]);
     tEl(TAB_IDS[TAB_ORDER[next]]).focus();
-  }
-
-  // ----- 패널 (다음 작업에서 채움) -----
-  function renderResultsPanel() {
-    tEl('panelResults').innerHTML = '<p class="t-placeholder">결과 보기 화면을 준비하고 있어요.</p>';
-  }
-  function renderSetupPanel() {
-    tEl('panelSetup').innerHTML = '<p class="t-placeholder">정답과 설정 화면을 준비하고 있어요.</p>';
   }
 
   // ----- 채점 탭 -----
@@ -752,6 +746,363 @@
     }
   }
 
+  // ----- 결과 보기 탭 -----
+  var clearAsked = false;
+  var clearing = false;
+
+  function pctText(v) { return String(Math.round((Number(v) || 0) * 10) / 10); }
+
+  function renderResultsPanel() {
+    var stats = teacherState.stats.filter(function (s) { return s.qType !== '서술형'; });
+    var hasData = stats.some(function (s) { return Number(s.totalCount) > 0; });
+    var html = '<h2 class="panel-h">문항별로 틀린 학생</h2>';
+    if (!hasData) {
+      html += '<p class="t-placeholder">제출이 쌓이면 문항별로 틀린 학생 수가 나와요.</p>';
+    } else {
+      html += '<div class="table-wrap"><table class="sheet-table stat-table"><thead><tr><th>번호</th><th>틀린 학생</th><th>가장 많이 쓴 오답</th></tr></thead><tbody>';
+      stats.forEach(function (s) {
+        var rate = Math.max(0, Math.min(100, Number(s.errorRate) || 0));
+        var width = rate > 0 ? Math.max(2, rate) : 0;
+        html += '<tr><td class="num">' + escapeHtml(s.qNum) + '</td>'
+          + '<td><span class="ink-track"><span class="ink-bar" style="width:' + width + '%"></span></span>'
+          + '<span class="bar-text">' + escapeHtml(s.wrongCount) + '명 (' + pctText(rate) + '%)</span></td>'
+          + '<td>' + escapeHtml(s.topWrongAnswer) + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+
+    html += '<h2 class="panel-h">제출 명렬표</h2>';
+    var subs = teacherState.submissions;
+    if (!subs.length) {
+      html += '<p class="t-placeholder">아직 제출한 학생이 없어요.</p>';
+    } else {
+      html += '<div class="table-wrap"><table class="sheet-table roster-all"><thead><tr><th>시간</th><th>번호</th><th>이름</th><th>총점</th><th>상태</th><th>문항별 요약</th></tr></thead><tbody>';
+      subs.forEach(function (s) {
+        html += '<tr><td class="nowrap">' + escapeHtml(s.time) + '</td>'
+          + '<td class="num">' + escapeHtml(s.studentNumber) + '</td>'
+          + '<td>' + escapeHtml(s.studentName) + '</td>'
+          + '<td class="nowrap">' + escapeHtml(fmtScore(s.totalScore)) + '점</td>'
+          + '<td class="nowrap">' + (s.isCompleted ? '완료' : '대기') + '</td>'
+          + '<td>' + escapeHtml(s.summary) + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+    html += '<div class="clear-area" id="clearArea"></div>';
+    tEl('panelResults').innerHTML = html;
+    renderClearArea();
+  }
+
+  function renderClearArea() {
+    var area = tEl('clearArea');
+    if (!area) return;
+    if (!clearAsked) {
+      area.innerHTML = '<button type="button" class="btn-quiet" id="clearRecordsBtn">제출 기록 모두 지우기</button>';
+    } else {
+      area.innerHTML = '<p class="clear-ask" role="alert">정말 지울까요? 되돌릴 수 없어요.</p>'
+        + '<div class="clear-btns"><button type="button" class="btn-ink" id="clearConfirmBtn">지우기</button>'
+        + '<button type="button" class="btn-quiet" id="clearCancelBtn">그만두기</button></div>';
+    }
+  }
+
+  async function clearRecords() {
+    if (clearing) return;
+    clearing = true;
+    var btn = tEl('clearConfirmBtn');
+    if (btn) btn.disabled = true;
+    var session = teacherSession;
+    var res;
+    try {
+      res = await serverCall('clearSubmissionRecords', teacherState.pw);
+    } catch (e) {
+      res = { success: false, message: '연결하지 못했어요. 다시 눌러 주세요.' };
+    }
+    clearing = false;
+    if (session !== teacherSession) return;
+    clearAsked = false;
+    if (res && res.success) {
+      showToast(res.message || '제출 기록을 모두 지웠어요.');
+      await refreshTeacherData();
+    } else {
+      showToast((res && res.message) || '지우지 못했어요. 다시 눌러 주세요.', 'error');
+      renderClearArea();
+      var again = tEl('clearRecordsBtn');
+      if (again) again.focus();
+    }
+  }
+
+  function onResultsClick(e) {
+    var b = e.target.closest('button');
+    if (!b) return;
+    if (b.id === 'clearRecordsBtn') {
+      clearAsked = true;
+      renderClearArea();
+      tEl('clearCancelBtn').focus();
+    } else if (b.id === 'clearCancelBtn') {
+      clearAsked = false;
+      renderClearArea();
+      tEl('clearRecordsBtn').focus();
+    } else if (b.id === 'clearConfirmBtn') {
+      clearRecords();
+    }
+  }
+
+  // ----- 정답과 설정 탭 -----
+  var QTYPES = ['객관식', '기호(ㄱ,ㄴ,ㄷ)', '기호(가,나,다)', 'OX퀴즈', '단답식', '서술형'];
+  // 저장 전 편집본: 저장하지 않은 변경(dirty)이 있으면 다른 곳의 새로고침에도 다시 만들지 않는다
+  var setupDraft = null;
+
+  function buildSetupDraft() {
+    var s = teacherState.settings || {};
+    return {
+      session: teacherSession, dirty: false, saving: false,
+      questions: teacherState.questions.map(function (q) {
+        return { origQNum: q.qNum, qType: q.qType, rawAnswerStr: q.rawAnswerStr || '', points: String(q.points), partialCredit: q.partialCredit === true, error: '' };
+      }),
+      settings: {
+        examTitle: s.examTitle || '', teacherPassword: '', showScore: s.showScore === true,
+        showCorrectAnswers: s.showCorrectAnswers === true, ignoreSpaces: s.ignoreSpaces === true, allowResubmit: s.allowResubmit === true
+      }
+    };
+  }
+
+  // 칸 수: 서술형은 1칸, 나머지는 쉼표(또는 옛 | )로 나눈 빈칸이 아닌 조각 수
+  function blankCountOfDraft(q) {
+    if (q.qType === '서술형') return 1;
+    return Math.max(1, String(q.rawAnswerStr || '').split(/[,|]/).filter(function (p) { return p.trim() !== ''; }).length);
+  }
+
+  function setupRowCells(q, idx) {
+    var n = idx + 1;
+    var opts = QTYPES.map(function (t) {
+      return '<option value="' + escapeHtml(t) + '"' + (q.qType === t ? ' selected' : '') + '>' + escapeHtml(t) + '</option>';
+    }).join('');
+    return '<td class="num">' + n + '</td>'
+      + '<td><select class="setup-select" data-f="type" aria-label="' + n + '번 유형">' + opts + '</select></td>'
+      + '<td class="blank-count">' + blankCountOfDraft(q) + '칸</td>'
+      + '<td><input type="text" class="line-input setup-answer" data-f="answer" aria-label="' + n + '번 정답" value="' + escapeHtml(q.rawAnswerStr) + '"'
+      + ' placeholder="' + (q.qType === '서술형' ? '채점 기준을 적어 두세요' : '예: 2, 4 또는 훈민정음/한글') + '">'
+      + (q.error ? '<div class="inline-error row-error">' + escapeHtml(q.error) + '</div>' : '') + '</td>'
+      + '<td><input type="number" class="line-input setup-points" data-f="points" aria-label="' + n + '번 배점" min="0" step="any" value="' + escapeHtml(q.points) + '"></td>'
+      + '<td class="center"><input type="checkbox" class="setup-check" data-f="partial" aria-label="' + n + '번 부분점수"' + (q.partialCredit ? ' checked' : '') + '></td>'
+      + '<td class="center"><button type="button" class="link-quiet" data-del aria-label="' + n + '번 삭제">삭제</button></td>';
+  }
+
+  function renderSetupRows() {
+    tEl('setupRows').innerHTML = setupDraft.questions.map(function (q, i) {
+      return '<tr data-idx="' + i + '">' + setupRowCells(q, i) + '</tr>';
+    }).join('');
+  }
+
+  function switchHtml(id, label, on) {
+    return '<label class="ink-switch"><input type="checkbox" id="' + id + '"' + (on ? ' checked' : '') + '>'
+      + '<span class="ink-switch__track"></span><span>' + label + '</span></label>';
+  }
+
+  function renderSetupPanel() {
+    if (setupDraft && setupDraft.session !== teacherSession) setupDraft = null;
+    if (setupDraft && setupDraft.dirty && tEl('setupRows')) return; // 쓰던 편집을 지키기
+    setupDraft = buildSetupDraft();
+    var st = setupDraft.settings;
+    var focusedId = document.activeElement && tEl('panelSetup').contains(document.activeElement) ? document.activeElement.id : '';
+    tEl('panelSetup').innerHTML =
+      '<h2 class="panel-h">정답표</h2>'
+      + '<p class="rule-line">쉼표(,)로 나누면 빈칸이 늘어나요. 예: 2, 4</p>'
+      + '<p class="rule-line">빗금(/)으로 묶으면 둘 다 정답이에요. 예: 훈민정음/한글</p>'
+      + '<fieldset class="setup-fields" id="setupFields">'
+      + '<div class="table-wrap"><table class="sheet-table setup-table"><thead><tr>'
+      + '<th>번호</th><th>유형</th><th>칸 수</th><th>정답</th><th>배점</th><th>부분점수</th><th>삭제</th>'
+      + '</tr></thead><tbody id="setupRows"></tbody></table></div>'
+      + '<p class="inline-error" id="setupRowNote" role="status" hidden></p>'
+      + '<p class="setup-add"><button type="button" class="btn-quiet" id="addQuestionBtn">문항 추가</button></p>'
+      + '<h2 class="panel-h">설정</h2>'
+      + '<div class="setup-grid">'
+      + '<label class="setup-field"><span class="pw-label">시험 제목</span><input type="text" class="line-input" id="cfgExamTitle" value="' + escapeHtml(st.examTitle) + '" placeholder="우리들의 답안지"></label>'
+      + '<label class="setup-field"><span class="pw-label">선생님 비밀번호</span><input type="password" class="line-input" id="cfgTeacherPw" autocomplete="new-password" placeholder="비워 두면 지금 비밀번호 그대로예요"></label>'
+      + '</div>'
+      + '<div class="setup-switches">'
+      + switchHtml('cfgShowScore', '점수와 ○/ 보여주기', st.showScore)
+      + switchHtml('cfgShowCorrectAnswers', '틀린 문제 정답 보여주기', st.showCorrectAnswers)
+      + switchHtml('cfgIgnoreSpaces', '띄어쓰기 무시하고 채점', st.ignoreSpaces)
+      + switchHtml('cfgAllowResubmit', '다시 내기 허용', st.allowResubmit)
+      + '</div></fieldset>'
+      + '<p class="setup-dirty" id="setupDirty" role="status" hidden>저장하지 않은 변경이 있어요</p>'
+      + '<p class="inline-error" id="setupError" hidden></p>'
+      + '<p class="setup-save"><button type="button" class="btn-ink" id="setupSaveBtn">저장</button></p>';
+    renderSetupRows();
+    if (focusedId && tEl(focusedId)) tEl(focusedId).focus(); // 새로고침으로 다시 그려도 포커스를 지킨다
+  }
+
+  function markSetupDirty() {
+    setupDraft.dirty = true;
+    tEl('setupDirty').hidden = false;
+    tEl('setupError').hidden = true;
+  }
+
+  function setupRowOf(el) {
+    var tr = el.closest('tr[data-idx]');
+    return tr ? { tr: tr, idx: Number(tr.getAttribute('data-idx')) } : null;
+  }
+
+  function clearRowError(row) {
+    setupDraft.questions[row.idx].error = '';
+    var err = row.tr.querySelector('.row-error');
+    if (err) err.remove();
+  }
+
+  function onSetupInput(e) {
+    if (!setupDraft || setupDraft.saving) return;
+    var t = e.target;
+    var f = t.getAttribute('data-f');
+    var row = setupRowOf(t);
+    if (row && (f === 'answer' || f === 'points')) {
+      var q = setupDraft.questions[row.idx];
+      if (f === 'answer') {
+        q.rawAnswerStr = t.value;
+        row.tr.querySelector('.blank-count').textContent = blankCountOfDraft(q) + '칸'; // 입력 중에는 이 셀만 바꾼다
+      } else {
+        q.points = t.value;
+      }
+      clearRowError(row);
+      markSetupDirty();
+    } else if (t.id === 'cfgExamTitle') {
+      setupDraft.settings.examTitle = t.value; markSetupDirty();
+    } else if (t.id === 'cfgTeacherPw') {
+      setupDraft.settings.teacherPassword = t.value; markSetupDirty();
+    }
+  }
+
+  function onSetupChange(e) {
+    if (!setupDraft || setupDraft.saving) return;
+    var t = e.target;
+    var f = t.getAttribute('data-f');
+    var row = setupRowOf(t);
+    if (row && f === 'type') {
+      setupDraft.questions[row.idx].qType = t.value;
+      row.tr.innerHTML = setupRowCells(setupDraft.questions[row.idx], row.idx); // 그 행만 다시 그린다
+      row.tr.querySelector('[data-f="type"]').focus();
+      markSetupDirty();
+    } else if (row && f === 'partial') {
+      setupDraft.questions[row.idx].partialCredit = t.checked; markSetupDirty();
+    } else if (/^cfg(ShowScore|ShowCorrectAnswers|IgnoreSpaces|AllowResubmit)$/.test(t.id)) {
+      var key = t.id.charAt(3).toLowerCase() + t.id.slice(4);
+      setupDraft.settings[key] = t.checked; markSetupDirty();
+    }
+  }
+
+  function addSetupRow() {
+    setupDraft.questions.push({ origQNum: null, qType: '객관식', rawAnswerStr: '1', points: '20', partialCredit: false, error: '' });
+    tEl('setupRowNote').hidden = true;
+    var idx = setupDraft.questions.length - 1;
+    var tr = document.createElement('tr');
+    tr.setAttribute('data-idx', String(idx));
+    tr.innerHTML = setupRowCells(setupDraft.questions[idx], idx);
+    tEl('setupRows').appendChild(tr);
+    markSetupDirty();
+    tr.querySelector('[data-f="type"]').focus();
+  }
+
+  function removeSetupRow(idx) {
+    var note = tEl('setupRowNote');
+    if (setupDraft.questions.length <= 1) {
+      note.textContent = '문항은 하나 이상 있어야 해요.';
+      note.hidden = false;
+      return;
+    }
+    note.hidden = true;
+    setupDraft.questions.splice(idx, 1);
+    renderSetupRows();
+    markSetupDirty();
+    var btns = tEl('setupRows').querySelectorAll('[data-del]');
+    btns[Math.min(idx, btns.length - 1)].focus();
+  }
+
+  // 저장 전 확인: 문제가 있는 행에 인라인 오류를 달고 첫 문제 입력 칸을 돌려준다
+  function validateSetup() {
+    var firstBad = null;
+    setupDraft.questions.forEach(function (q, i) {
+      var msg = '';
+      var pts = String(q.points).trim();
+      var answerBad = q.qType !== '서술형' && !String(q.rawAnswerStr).trim();
+      if (answerBad) msg = '정답을 적어 주세요.';
+      else if (pts === '' || !isFinite(Number(pts)) || Number(pts) < 0) msg = '배점을 0 이상의 숫자로 적어 주세요.';
+      q.error = msg;
+      var tr = tEl('setupRows').querySelector('tr[data-idx="' + i + '"]');
+      var old = tr.querySelector('.row-error');
+      if (old) old.remove();
+      if (msg) {
+        tr.querySelector('[data-f="answer"]').parentNode.insertAdjacentHTML('beforeend', '<div class="inline-error row-error">' + escapeHtml(msg) + '</div>');
+        if (!firstBad) firstBad = tr.querySelector(answerBad ? '[data-f="answer"]' : '[data-f="points"]');
+      }
+    });
+    return firstBad;
+  }
+
+  async function saveSetup() {
+    var d = setupDraft;
+    if (!d || d.saving) return;
+    var bad = validateSetup();
+    if (bad) {
+      var err = tEl('setupError');
+      err.textContent = '표시된 곳을 고치고 다시 저장해 주세요.';
+      err.hidden = false;
+      bad.focus();
+      return;
+    }
+    tEl('setupError').hidden = true;
+    var pw = d.settings.teacherPassword.trim() || teacherState.pw;
+    var settings = {
+      examTitle: d.settings.examTitle.trim() || '우리들의 답안지',
+      teacherPassword: pw,
+      publishResults: teacherState.settings.publishResults === true,
+      showScore: d.settings.showScore,
+      showCorrectAnswers: d.settings.showCorrectAnswers,
+      ignoreSpaces: d.settings.ignoreSpaces,
+      allowResubmit: d.settings.allowResubmit,
+      omrTheme: 'blue'
+    };
+    var questions = d.questions.map(function (q, i) {
+      return { qNum: i + 1, origQNum: q.origQNum, qType: q.qType, rawAnswerStr: q.rawAnswerStr.trim(), points: Number(String(q.points).trim()), partialCredit: q.partialCredit };
+    });
+    d.saving = true;
+    tEl('setupSaveBtn').disabled = true;
+    tEl('setupFields').disabled = true; // 저장하는 동안은 고칠 수 없다 (origQNum 이 어긋나지 않게)
+    var session = teacherSession;
+    var res;
+    try {
+      res = await serverCall('saveTeacherConfig', { authPassword: teacherState.pw, settings: settings, questions: questions });
+    } catch (e) {
+      res = null;
+    }
+    if (session !== teacherSession) return;
+    d.saving = false;
+    var btn = tEl('setupSaveBtn'), fields = tEl('setupFields');
+    if (btn) btn.disabled = false;
+    if (fields) fields.disabled = false;
+    if (!res || !res.success) {
+      showToast((res && res.message) || '저장하지 못했어요. 연결을 확인해 주세요.', 'error');
+      return;
+    }
+    // 저장한 내용을 먼저 상태에 반영하고, 서버 값으로 다시 맞춘다
+    teacherState.pw = pw;
+    teacherState.settings = Object.assign({}, teacherState.settings, settings);
+    teacherState.questions = questions.map(function (q) {
+      return { qNum: q.qNum, qType: q.qType, blankCount: blankCountOfDraft(q), rawAnswerStr: q.rawAnswerStr, points: q.points, partialCredit: q.partialCredit };
+    });
+    setupDraft = null;
+    renderTopBar();
+    if (teacherState.tab === 'setup') { renderSetupPanel(); tEl('setupSaveBtn').focus(); }
+    showToast('저장했어요');
+    refreshTeacherData();
+  }
+
+  function onSetupClick(e) {
+    var b = e.target.closest('button');
+    if (!b || !setupDraft || setupDraft.saving) return;
+    if (b.id === 'addQuestionBtn') addSetupRow();
+    else if (b.id === 'setupSaveBtn') saveSetup();
+    else if (b.hasAttribute('data-del')) removeSetupRow(setupRowOf(b).idx);
+  }
+
   // ----- 이벤트 -----
   tEl('tabGrade').parentNode.addEventListener('click', function (e) {
     var btn = e.target.closest('[data-tab]');
@@ -775,6 +1126,10 @@
   tEl('panelGrade').addEventListener('input', function (e) {
     if (e.target.id === 'commentInput') commentDrafts[teacherState.selectedRowIndex] = e.target.value;
   });
+  tEl('panelResults').addEventListener('click', onResultsClick);
+  tEl('panelSetup').addEventListener('input', onSetupInput);
+  tEl('panelSetup').addEventListener('change', onSetupChange);
+  tEl('panelSetup').addEventListener('click', onSetupClick);
   tEl('pwOkBtn').addEventListener('click', function () { confirmTeacherLogin(); });
   tEl('pwCancelBtn').addEventListener('click', closeTeacherLogin);
   tEl('passwordModal').addEventListener('keydown', function (e) {
