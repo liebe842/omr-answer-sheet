@@ -146,6 +146,8 @@
 - `index.html`의 `google.script.run` 호출 이름·인자는 그대로 유지하는 것이 원칙.
 - `omrTheme`: UI에서 제거. 서버의 설정 키는 **남겨둠**(기존 시트 호환, 내 결정). `saveTeacherConfig`로 보낼 때는 기존 값 그대로 전달하거나 `'blue'` 고정.
 - 서버 메시지 문구 정리 권장(이모지·과장 제거, 예: 저장 성공 메시지). 토스트로 노출되므로.
+- (R17) `remapSubmissionsToQuestions_`: 정답과 설정 저장으로 문항이 바뀌어도 각 행의 완료 값은 **이전 값 그대로** 둔다(예전 `wasCompleted || !hasPending` → `wasCompleted`). 완료는 '채점 끝'에서만(1-나).
+- (R18) 클라이언트가 부르지 않는 서버 함수는 이름 끝에 `_`를 붙여 `google.script.run`에서 숨긴다(예: `getSettingsMap_`는 비밀번호를 돌려주므로). 공개 함수는 `doGet`, `include`와 클라이언트가 부르는 8개 RPC뿐.
 - 그 외 로직 변경 없음.
 
 ## 10. 빌더에게 맡기는 것
