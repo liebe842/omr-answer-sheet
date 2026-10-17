@@ -40,7 +40,7 @@
       .replace(/'/g, '&#39;');
   }
 
-  // 문항 유형 헬퍼 (서버 normalizeQuestionType 의 정식 유형 문자열과 동일)
+  // 문항 유형 헬퍼 (서버 normalizeQuestionType_ 의 정식 유형 문자열과 동일)
   var CHOICE_TYPES = ['객관식', '기호(ㄱ,ㄴ,ㄷ)', '기호(가,나,다)', 'OX퀴즈'];
   function isChoiceType(qType) {
     return CHOICE_TYPES.indexOf(qType) >= 0;

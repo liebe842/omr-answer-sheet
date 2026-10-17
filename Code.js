@@ -9,7 +9,7 @@
  */
 
 function doGet(e) {
-  initialSetup();
+  initialSetup_();
   return HtmlService.createTemplateFromFile('index')
     .evaluate()
     .setTitle('우리들의 답안지')
@@ -22,7 +22,7 @@ function include(name) {
 }
 
 // 초기 시트 세팅 함수
-function initialSetup() {
+function initialSetup_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   
   // (1) 환경설정 시트
@@ -69,7 +69,7 @@ function initialSetup() {
       [5, '서술형', '', '백성을 가르치는 바른 소리라는 뜻이다', 20, false]
     ];
     answerSheet.getRange(2, 1, sampleRows.length, 6).setValues(sampleRows);
-    applySheetFormattingAndFormulas();
+    applySheetFormattingAndFormulas_();
   }
 
   // (3) 제출결과 시트
@@ -83,7 +83,7 @@ function initialSetup() {
 }
 
 // ★ 정답설정 시트에 B열 드롭다운, C열 쉼표 자동계산 수식, F열 체크박스를 입히는 함수
-function applySheetFormattingAndFormulas() {
+function applySheetFormattingAndFormulas_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let answerSheet = ss.getSheetByName('정답설정');
   if (!answerSheet) return;
@@ -126,7 +126,7 @@ function applySheetFormattingAndFormulas() {
 }
 
 // 문제유형 문자열 정규화 보조 함수
-function normalizeQuestionType(rawType) {
+function normalizeQuestionType_(rawType) {
   const t = String(rawType || '').trim();
   if (t.includes('서술형')) return '서술형';
   if (t.includes('ㄱ') || t.includes('기호(ㄱ')) return '기호(ㄱ,ㄴ,ㄷ)';
@@ -138,8 +138,8 @@ function normalizeQuestionType(rawType) {
 
 // D열 정답 문자열 파싱: 쉼표(,)로 빈칸 슬롯을 나누고, 각 슬롯 안에서는 슬래시(/)로 유사 정답을 나눔
 // 반환 형태: [ ['세종대왕', '세종'], ['장영실'] ] (길이 = 빈칸 개수)
-function parseAnswerSlots(rawStr, qType) {
-  const normType = normalizeQuestionType(qType);
+function parseAnswerSlots_(rawStr, qType) {
+  const normType = normalizeQuestionType_(qType);
   const str = String(rawStr || '').trim();
   if (normType === '서술형') {
     return [[str]]; // 서술형은 쉼표가 있어도 무조건 빈칸 1개(모범답안 참고용)
@@ -156,7 +156,7 @@ function parseAnswerSlots(rawStr, qType) {
   });
 }
 
-function getSettingsMap() {
+function getSettingsMap_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const configSheet = ss.getSheetByName('환경설정');
   const data = configSheet.getDataRange().getValues();
@@ -190,7 +190,7 @@ function getSettingsMap() {
 function getStudentInitData() {
   // 시트 초기화는 doGet()에서 이미 수행됨
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const settings = getSettingsMap();
+  const settings = getSettingsMap_();
   const answerSheet = ss.getSheetByName('정답설정');
   const rows = answerSheet.getDataRange().getValues();
   
@@ -198,9 +198,9 @@ function getStudentInitData() {
   for (let i = 1; i < rows.length; i++) {
     if (!rows[i][0] && !rows[i][1] && !rows[i][3]) continue;
     const qNum = Number(rows[i][0]) || (questions.length + 1); // 빈 문항번호는 유효 문항 순번으로 통일
-    const qType = normalizeQuestionType(rows[i][1]);
+    const qType = normalizeQuestionType_(rows[i][1]);
     const rawAnsStr = String(rows[i][3] || '');
-    const slots = parseAnswerSlots(rawAnsStr, qType);
+    const slots = parseAnswerSlots_(rawAnsStr, qType);
     // D열의 쉼표 개수로 자동 계산된 슬롯 수를 우선 사용
     const blankCount = qType === '서술형' ? 1 : Math.max(1, slots.length);
 
@@ -222,7 +222,7 @@ function getStudentInitData() {
 }
 
 // 단일 문항 자동 채점 함수
-function evaluateSingleQuestion(qRow, userArrRaw, ignoreSpaces) {
+function evaluateSingleQuestion_(qRow, userArrRaw, ignoreSpaces) {
   const normalize = (str) => {
     let s = String(str || '').trim();
     if (ignoreSpaces) s = s.replace(/\s+/g, '');
@@ -237,12 +237,12 @@ function evaluateSingleQuestion(qRow, userArrRaw, ignoreSpaces) {
   };
 
   const qNum = Number(qRow[0]);
-  const qType = normalizeQuestionType(qRow[1]);
+  const qType = normalizeQuestionType_(qRow[1]);
   const rawAnswerStr = String(qRow[3] || '');
   const points = Number(qRow[4]) || 0;
   const partialCredit = qRow[5] === true || String(qRow[5]).toUpperCase() === 'TRUE';
 
-  const slots = parseAnswerSlots(rawAnswerStr, qType); // [ ['정답1', '유사1'], ['정답2'] ]
+  const slots = parseAnswerSlots_(rawAnswerStr, qType); // [ ['정답1', '유사1'], ['정답2'] ]
   const blankCount = qType === '서술형' ? 1 : Math.max(1, slots.length);
 
   const userSlots = [];
@@ -357,7 +357,7 @@ function submitStudentAnswers(payload) {
   
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const settings = getSettingsMap();
+    const settings = getSettingsMap_();
     const answerSheet = ss.getSheetByName('정답설정');
     const resultSheet = ss.getSheetByName('제출결과');
     
@@ -393,7 +393,7 @@ function submitStudentAnswers(payload) {
       validQNums.push(qNum);
       const userArrRaw = Array.isArray(studentAnswers[qNum]) ? studentAnswers[qNum] : [studentAnswers[qNum] || ''];
       
-      const evalRes = evaluateSingleQuestion(qRows[i], userArrRaw, ignoreSpaces);
+      const evalRes = evaluateSingleQuestion_(qRows[i], userArrRaw, ignoreSpaces);
       
       totalScore += evalRes.earnedPoints;
       if (evalRes.qType === '서술형') hasEssay = true;
@@ -443,7 +443,7 @@ function submitStudentAnswers(payload) {
 // 학생 대기 화면에서 실시간으로 채점 완료 여부 및 결과 조회
 function checkStudentResultStatus(payload) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const settings = getSettingsMap();
+  const settings = getSettingsMap_();
   const resultSheet = ss.getSheetByName('제출결과');
   const answerSheet = ss.getSheetByName('정답설정');
   
@@ -488,14 +488,14 @@ function checkStudentResultStatus(payload) {
   for (let i = 1; i < qRows.length; i++) {
     if (!qRows[i][0] && !qRows[i][1] && !qRows[i][3]) continue;
     const qNum = Number(qRows[i][0]) || (gradingDetails.length + 1);
-    const qType = normalizeQuestionType(qRows[i][1]);
+    const qType = normalizeQuestionType_(qRows[i][1]);
     const maxPts = Number(qRows[i][4]) || 0;
     maxScore += maxPts;
     
     const userAns = String(studentRow[8 + colOffset] || '(미입력)');
     colOffset++;
 
-    const slots = parseAnswerSlots(qRows[i][3], qType);
+    const slots = parseAnswerSlots_(qRows[i][3], qType);
     const displayCorrect = slots.map(s => s.join('/')).join(', ');
 
     // 제출 이후 추가된 문항 등 채점 기록이 없으면 미응답(0점)으로 처리
@@ -538,7 +538,7 @@ function checkStudentResultStatus(payload) {
 function verifyTeacherAndGetData(passwordInput) {
   // 시트 초기화는 doGet()에서 이미 수행됨 (새로고침마다 반복 호출되므로 생략)
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const settings = getSettingsMap();
+  const settings = getSettingsMap_();
   
   if (String(passwordInput).trim() !== String(settings.teacherPassword).trim()) {
     return { success: false, message: '비밀번호가 일치하지 않습니다.' };
@@ -553,9 +553,9 @@ function verifyTeacherAndGetData(passwordInput) {
     if (!qRows[i][0] && !qRows[i][1] && !qRows[i][3]) continue;
     validQRows.push(qRows[i]);
     const qNum = Number(qRows[i][0]) || (questions.length + 1);
-    const qType = normalizeQuestionType(qRows[i][1]);
+    const qType = normalizeQuestionType_(qRows[i][1]);
     const rawAnsStr = String(qRows[i][3] || '');
-    const slots = parseAnswerSlots(rawAnsStr, qType);
+    const slots = parseAnswerSlots_(rawAnsStr, qType);
     const blankCount = qType === '서술형' ? 1 : Math.max(1, slots.length);
 
     questions.push({
@@ -602,7 +602,7 @@ function verifyTeacherAndGetData(passwordInput) {
 
       // 문항별 초기 점수 정보가 없으면 재계산하여 채움
       if (!perQMap[qNum]) {
-        const evalRes = evaluateSingleQuestion(qRow, ansText === '(미입력)' ? [] : ansText.split(','), ignoreSpaces);
+        const evalRes = evaluateSingleQuestion_(qRow, ansText === '(미입력)' ? [] : ansText.split(','), ignoreSpaces);
         perQMap[qNum] = {
           status: evalRes.status,
           earnedPoints: evalRes.earnedPoints,
@@ -623,7 +623,7 @@ function verifyTeacherAndGetData(passwordInput) {
 
     submissions.push({
       rowIndex: i + 1,
-      rowKey: getSubmissionRowKey(rRows[i]),
+      rowKey: getSubmissionRowKey_(rRows[i]),
       time: String(timeVal),
       studentNumber: String(rRows[i][1]),
       studentName: String(rRows[i][2]),
@@ -667,7 +667,7 @@ function verifyTeacherAndGetData(passwordInput) {
 }
 
 // 제출결과 행 식별값 (제출일시|번호|이름): 채점 저장 시 행 번호가 같은 학생을 가리키는지 확인용
-function getSubmissionRowKey(row) {
+function getSubmissionRowKey_(row) {
   const ts = row[0] instanceof Date ? row[0].getTime() : String(row[0]);
   return [ts, String(row[1]).trim(), String(row[2]).trim()].join('|');
 }
@@ -679,7 +679,7 @@ function updateStudentQuestionGrade(payload) {
   
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const settings = getSettingsMap();
+    const settings = getSettingsMap_();
     if (String(payload.authPassword).trim() !== String(settings.teacherPassword).trim()) {
       return { success: false, message: '권한이 없습니다.' };
     }
@@ -692,7 +692,7 @@ function updateStudentQuestionGrade(payload) {
     const rowValues = resultSheet.getRange(rowIndex, 1, 1, resultSheet.getLastColumn()).getValues()[0];
 
     // 화면을 불러온 뒤 기록 초기화/삭제로 행이 바뀌었으면 다른 학생 행에 저장되지 않도록 차단
-    if (getSubmissionRowKey(rowValues) !== String(payload.rowKey)) {
+    if (getSubmissionRowKey_(rowValues) !== String(payload.rowKey)) {
       return { success: false, message: '제출 기록이 변경되었습니다. 새로고침 후 다시 채점해 주세요.' };
     }
 
@@ -752,7 +752,7 @@ function setPublishResultsStatus(payload) {
 
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const settings = getSettingsMap();
+    const settings = getSettingsMap_();
   
     if (String(payload.authPassword).trim() !== String(settings.teacherPassword).trim()) {
       return { success: false, message: '권한이 없습니다.' };
@@ -793,7 +793,7 @@ function saveTeacherConfig(payload) {
   
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const settings = getSettingsMap();
+    const settings = getSettingsMap_();
     
     if (String(payload.authPassword).trim() !== String(settings.teacherPassword).trim()) {
       return { success: false, message: '권한이 없습니다.' };
@@ -825,11 +825,11 @@ function saveTeacherConfig(payload) {
     
     questions.forEach((q, idx) => {
       const qNum = idx + 1;
-      const qType = normalizeQuestionType(q.qType);
+      const qType = normalizeQuestionType_(q.qType);
       const rawAns = String(q.rawAnswerStr || '').trim();
       const points = Number(q.points) || 0;
       const partialCredit = q.partialCredit === true;
-      // C열은 applySheetFormattingAndFormulas()에서 수식으로 채워짐
+      // C열은 applySheetFormattingAndFormulas_()에서 수식으로 채워짐
       rowsToWrite.push([qNum, qType, '', rawAns, points, partialCredit]);
     });
     
@@ -844,10 +844,10 @@ function saveTeacherConfig(payload) {
     }
 
     // 드롭다운, C열 쉼표 자동계산 수식, 체크박스 재적용
-    applySheetFormattingAndFormulas();
+    applySheetFormattingAndFormulas_();
 
     // 문항 삭제/순서 변경/추가 시 기존 제출 답안과 채점 기록을 새 문항 번호에 맞게 이동
-    remapSubmissionsToQuestions(questions, rowsToWrite);
+    remapSubmissionsToQuestions_(questions, rowsToWrite);
 
     return { success: true, message: '저장했어요.' };
   } catch (err) {
@@ -859,7 +859,7 @@ function saveTeacherConfig(payload) {
 
 // 문항 편집 후 제출결과 시트의 문항별 답안 열(I열~)과 문항별점수JSON을 새 문항 번호 기준으로 재배치
 // questions[idx].origQNum: 편집 전 문항 번호 (null이면 새로 추가된 문항), rowsToWrite[idx]: 새 정답설정 행
-function remapSubmissionsToQuestions(questions, rowsToWrite) {
+function remapSubmissionsToQuestions_(questions, rowsToWrite) {
   // 이전 버전 화면에서 저장한 경우(원래 번호 정보 없음)에는 기존 동작대로 건드리지 않음
   if (rowsToWrite.length === 0 || questions.some(q => q.origQNum === undefined)) return;
 
@@ -879,7 +879,7 @@ function remapSubmissionsToQuestions(questions, rowsToWrite) {
     origNums.every((n, idx) => n === idx + 1 && oldColByQNum[n] === 8 + idx);
   if (isUnchanged) return;
 
-  const ignoreSpaces = getSettingsMap().ignoreSpaces === true;
+  const ignoreSpaces = getSettingsMap_().ignoreSpaces === true;
   const width = Math.max(rRows[0].length, 8 + rowsToWrite.length);
   const pad = (arr) => arr.concat(new Array(width - arr.length).fill(''));
 
@@ -920,7 +920,7 @@ function remapSubmissionsToQuestions(questions, rowsToWrite) {
         if (oldPerQ[orig]) {
           rec = Object.assign({}, oldPerQ[orig], { maxPoints: maxPoints });
         } else {
-          const evalRes = evaluateSingleQuestion(qRow, ans === '(미입력)' ? [] : ans.split(','), ignoreSpaces);
+          const evalRes = evaluateSingleQuestion_(qRow, ans === '(미입력)' ? [] : ans.split(','), ignoreSpaces);
           rec = { status: evalRes.status, earnedPoints: evalRes.earnedPoints, maxPoints: evalRes.points };
         }
       }
@@ -957,7 +957,7 @@ function clearSubmissionRecords(passwordInput) {
 
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const settings = getSettingsMap();
+    const settings = getSettingsMap_();
     if (String(passwordInput).trim() !== String(settings.teacherPassword).trim()) {
       return { success: false, message: '비밀번호가 일치하지 않습니다.' };
     }

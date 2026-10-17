@@ -49,7 +49,7 @@
     };
   }
 
-  // 단일 문항 채점 (서버 evaluateSingleQuestion 의 핵심 규칙)
+  // 단일 문항 채점 (서버 evaluateSingleQuestion_ 의 핵심 규칙)
   function norm(s) { return String(s || '').trim().replace(/\s+/g, '').toLowerCase(); }
   function evaluate(q, user) {
     var slots = splitSlots(q.rawAnswerStr, q.qType);
