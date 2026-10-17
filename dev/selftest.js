@@ -28,7 +28,7 @@
 
   // 스크린샷용 상태 만들기: ?demo=waiting | result (result 는 fresh 에서 일부 오답을 내고 공개, perfect 시나리오는 바로 결과)
   var demoMode = params.get('demo');
-  if (demoMode) {
+  if (demoMode === 'waiting' || demoMode === 'result') {
     window.addEventListener('load', function () {
       setTimeout(async function () {
         if (pageScenario !== 'perfect') {
@@ -62,6 +62,20 @@
           }
         }
       }, 200);
+    });
+  }
+
+  // 스크린샷용: ?demo=teacher[&tab=results] 로그인된 선생님 화면, ?demo=modal 비밀번호 쪽지
+  if (demoMode === 'teacher' || demoMode === 'modal') {
+    window.addEventListener('load', function () {
+      setTimeout(async function () {
+        if (demoMode === 'modal') { openTeacherLogin(); return; }
+        openTeacherLogin();
+        document.getElementById('teacherPwInput').value = '1234';
+        await confirmTeacherLogin();
+        var t = params.get('tab');
+        if (t) switchTab(t);
+      }, 300);
     });
   }
 
@@ -664,6 +678,191 @@
     assertTrue(document.getElementById('studentAfter').textContent.indexOf('선생님이 채점을 마쳤어요.') >= 0);
     assertEq(document.querySelector('.result-comment').textContent, '수고했어요.');
   }, { scenario: 'perfect' });
+
+  // ===== Task 5: 선생님 껍데기 =====
+  function tById(id) { return document.getElementById(id); }
+  async function teacherLogin(pw) {
+    if (!tById('teacherView').hidden) tById('toStudentBtn').click();
+    openTeacherLogin();
+    tById('teacherPwInput').value = pw === undefined ? '1234' : pw;
+    await confirmTeacherLogin();
+  }
+  function visiblePanels() {
+    return ['panelGrade', 'panelResults', 'panelSetup'].filter(function (id) { return !tById(id).hidden; });
+  }
+  test('teacher: 틀린 비밀번호는 모달 안에 문구를 보이고 모달이 남는다', async function () {
+    openTeacherLogin();
+    assertEq(tById('passwordModal').hidden, false);
+    assertEq(document.activeElement.id, 'teacherPwInput');
+    tById('teacherPwInput').value = '9999';
+    await confirmTeacherLogin();
+    assertEq(tById('pwError').textContent, '비밀번호가 일치하지 않습니다.');
+    assertEq(tById('pwError').hidden, false);
+    assertEq(tById('pwError').getAttribute('role'), 'alert');
+    assertEq(tById('passwordModal').hidden, false);
+    assertEq(tById('teacherView').hidden, true);
+    assertEq(tById('pwOkBtn').disabled, false);
+    assertEq(teacherState.pw, '');
+  }, { scenario: 'teacher' });
+  test('teacher: 빈 비밀번호는 서버를 부르지 않고 안내한다', async function () {
+    var before = window.__gasCalls.length;
+    tById('teacherPwInput').value = '';
+    await confirmTeacherLogin();
+    assertEq(tById('pwError').textContent, '비밀번호를 입력해 주세요.');
+    assertEq(window.__gasCalls.length, before);
+  }, { scenario: 'teacher' });
+  test('teacher: 통신 실패는 안내하고 들어가기를 다시 켠다', async function () {
+    window.__stubReject.verifyTeacherAndGetData = true;
+    tById('teacherPwInput').value = '1234';
+    await confirmTeacherLogin();
+    window.__stubReject.verifyTeacherAndGetData = false;
+    assertTrue(tById('pwError').textContent.length > 0 && !tById('pwError').hidden);
+    assertEq(tById('pwOkBtn').disabled, false);
+    assertEq(tById('teacherView').hidden, true);
+  }, { scenario: 'teacher' });
+  test('teacher: 맞는 비밀번호로 들어가면 상단 줄과 첫 탭(채점)이 보인다', async function () {
+    tById('teacherPwInput').value = '1234';
+    var p = confirmTeacherLogin();
+    assertEq(tById('pwOkBtn').disabled, true, '확인 중에는 들어가기 비활성');
+    await p;
+    assertEq(tById('passwordModal').hidden, true);
+    assertEq(tById('teacherView').hidden, false);
+    assertEq(tById('studentView').hidden, true);
+    var counts = tById('tCounts').textContent;
+    assertTrue(counts.indexOf('제출 5명') >= 0, counts);
+    assertTrue(counts.indexOf('채점 대기 3명') >= 0, counts);
+    assertEq(tById('tExamTitle').textContent, '사회 2단원 평가 답안지');
+    assertEq(teacherState.tab, 'grade');
+    assertEq(teacherState.gradeView, 'byQuestion');
+    assertEq(teacherState.selectedQNum, null);
+    assertEq(teacherState.selectedRowIndex, null);
+    assertEq(teacherState.pw, '1234');
+    assertEq(teacherState.submissions.length, 5);
+    assertEq(teacherState.questions.length, 6);
+    assertEq(teacherState.stats.length, 6);
+    assertEq(visiblePanels(), ['panelGrade']);
+    assertEq(tById('publishSwitch').checked, false);
+    assertEq(tById('publishState').textContent, '꺼짐');
+  }, { scenario: 'teacher' });
+  test('teacher: countWaiting 은 완료되지 않은 제출만 센다', async function () {
+    assertEq(countWaiting([]), 0);
+    assertEq(countWaiting(null), 0);
+    assertEq(countWaiting([{ isCompleted: true }, { isCompleted: false }, {}, { isCompleted: false }]), 3);
+  }, { scenario: 'teacher' });
+  test('teacher: 탭 클릭은 해당 패널만 보이고 aria 를 갱신한다', async function () {
+    var tabs = ['tabGrade', 'tabResults', 'tabSetup'], panels = ['panelGrade', 'panelResults', 'panelSetup'];
+    assertEq(tById('tabGrade').parentNode.getAttribute('role'), 'tablist');
+    for (var i = 0; i < 3; i++) {
+      tById(tabs[i]).click();
+      assertEq(visiblePanels(), [panels[i]]);
+      assertEq(tabs.map(function (t) { return tById(t).getAttribute('aria-selected'); }), tabs.map(function (t, j) { return j === i ? 'true' : 'false'; }));
+      assertEq(tabs.map(function (t) { return tById(t).tabIndex; }), tabs.map(function (t, j) { return j === i ? 0 : -1; }));
+      assertEq(tById(tabs[i]).getAttribute('aria-controls'), panels[i]);
+      assertEq(tById(panels[i]).getAttribute('aria-labelledby'), tabs[i]);
+      assertEq(tById(panels[i]).getAttribute('role'), 'tabpanel');
+    }
+    assertEq(teacherState.tab, 'setup');
+    tById('tabGrade').click();
+  }, { scenario: 'teacher' });
+  test('teacher: 좌우 화살표로 탭을 옮기고 끝에서는 돌아간다', async function () {
+    tById('tabGrade').focus();
+    function key(k) { document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true })); }
+    key('ArrowRight');
+    assertEq(document.activeElement.id, 'tabResults');
+    assertEq(teacherState.tab, 'results');
+    assertEq(visiblePanels(), ['panelResults']);
+    key('ArrowRight');
+    key('ArrowRight');
+    assertEq(document.activeElement.id, 'tabGrade');
+    key('ArrowLeft');
+    assertEq(document.activeElement.id, 'tabSetup');
+    assertEq(teacherState.tab, 'setup');
+    tById('tabGrade').click();
+  }, { scenario: 'teacher' });
+  test('teacher: 새로고침은 스크롤을 유지하고 현재 탭만 다시 그린다', async function () {
+    var calls = { grade: 0, results: 0, setup: 0 };
+    var orig = { g: window.renderGradePanel, r: window.renderResultsPanel, s: window.renderSetupPanel };
+    window.renderGradePanel = function () { calls.grade++; return orig.g.apply(this, arguments); };
+    window.renderResultsPanel = function () { calls.results++; return orig.r.apply(this, arguments); };
+    window.renderSetupPanel = function () { calls.setup++; return orig.s.apply(this, arguments); };
+    document.body.style.minHeight = '4000px';
+    window.scrollTo(0, 300);
+    var y0 = window.scrollY;
+    await refreshTeacherData();
+    var y1 = window.scrollY;
+    document.body.style.minHeight = '';
+    window.renderGradePanel = orig.g; window.renderResultsPanel = orig.r; window.renderSetupPanel = orig.s;
+    assertTrue(y0 > 0, '스크롤이 먼저 움직여야 함 ' + y0);
+    assertEq(y1, y0);
+    assertEq(calls, { grade: 1, results: 0, setup: 0 });
+    assertEq(window.__gasCalls[window.__gasCalls.length - 1].fn, 'verifyTeacherAndGetData');
+  }, { scenario: 'teacher' });
+  test('teacher: 공개 스위치를 켜면 서버에 알리고 토스트를 띄운다', async function () {
+    tById('publishSwitch').click();
+    await sleep(80);
+    var last = window.__gasCalls.filter(function (c) { return c.fn === 'setPublishResultsStatus'; }).pop();
+    assertEq(last.payload, { authPassword: '1234', publish: true, markAllCompleted: false });
+    assertEq(tById('publishState').textContent, '켜짐');
+    assertEq(tById('toast').textContent, '결과를 보여주기 시작했어요');
+    assertEq(teacherState.settings.publishResults, true);
+    assertEq(tById('publishSwitch').disabled, false);
+    tById('publishSwitch').click();
+    await sleep(80);
+    assertEq(tById('toast').textContent, '결과를 다시 가렸어요');
+    assertEq(tById('publishState').textContent, '꺼짐');
+  }, { scenario: 'teacher' });
+  test('teacher: 공개 설정이 실패하면 스위치가 되돌아오고 오류 토스트', async function () {
+    window.__stubReject.setPublishResultsStatus = true;
+    tById('publishSwitch').click();
+    await sleep(80);
+    window.__stubReject.setPublishResultsStatus = false;
+    assertEq(tById('publishSwitch').checked, false);
+    assertEq(tById('publishState').textContent, '꺼짐');
+    assertEq(tById('toast').classList.contains('error'), true);
+    assertEq(teacherState.settings.publishResults, false);
+    assertEq(tById('publishSwitch').disabled, false);
+  }, { scenario: 'teacher' });
+  test('teacher: 학생 화면으로 돌아가면 비밀번호와 데이터를 지운다', async function () {
+    tById('tabResults').click();
+    tById('toStudentBtn').click();
+    assertEq(tById('teacherView').hidden, true);
+    assertEq(tById('studentView').hidden, false);
+    assertEq(teacherState.pw, '');
+    assertEq(teacherState.submissions, []);
+    assertEq(teacherState.tab, 'grade');
+    assertEq(tById('teacherPwInput').value, '');
+  }, { scenario: 'teacher' });
+  test('teacher: Escape 는 취소하고 포커스를 선생님 버튼으로 돌린다', async function () {
+    tById('teacherEntryBtn').click();
+    assertEq(tById('passwordModal').hidden, false);
+    assertEq(document.activeElement.id, 'teacherPwInput');
+    var dlg = tById('passwordModal').querySelector('[role="dialog"]');
+    assertEq(dlg.getAttribute('aria-modal'), 'true');
+    assertTrue(!!dlg.getAttribute('aria-labelledby'));
+    assertEq(tById('teacherPwInput').labels.length, 1);
+    tById('teacherPwInput').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    assertEq(tById('passwordModal').hidden, true);
+    assertEq(document.activeElement.id, 'teacherEntryBtn');
+    tById('teacherEntryBtn').click();
+    tById('pwCancelBtn').click();
+    assertEq(tById('passwordModal').hidden, true);
+  }, { scenario: 'teacher' });
+  test('teacher: Enter 로 들어가고, 다시 열면 비밀번호 칸과 오류가 비어 있다', async function () {
+    tById('teacherEntryBtn').click();
+    assertEq(tById('teacherPwInput').value, '');
+    assertEq(tById('pwError').hidden, true);
+    tById('teacherPwInput').value = '1234';
+    tById('teacherPwInput').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await sleep(100);
+    assertEq(tById('teacherView').hidden, false);
+    assertEq(tById('passwordModal').hidden, true);
+  }, { scenario: 'teacher' });
+  test('teacher: 시험 제목의 위험 문자는 상단에서도 글자 그대로', async function () {
+    teacherState.settings.examTitle = '<img src=x onerror=alert(1)> 평가';
+    renderTopBar();
+    assertEq(tById('tExamTitle').textContent, '<img src=x onerror=alert(1)> 평가');
+    assertEq(tById('teacherView').querySelectorAll('img').length, 0);
+  }, { scenario: 'teacher' });
 
   // ===== 실행 =====
   async function runAll() {

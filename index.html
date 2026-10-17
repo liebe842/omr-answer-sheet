@@ -39,10 +39,43 @@
   </main>
 
   <!-- 선생님 화면: 로그인 후 채점 / 결과 보기 / 정답과 설정 -->
-  <main id="teacherView" hidden></main>
+  <main id="teacherView" class="teacher-view" hidden>
+    <div class="t-top">
+      <h1 class="t-title" id="tExamTitle"></h1>
+      <p class="t-counts" id="tCounts"></p>
+      <label class="ink-switch t-pub">
+        <input type="checkbox" id="publishSwitch">
+        <span class="ink-switch__track"></span>
+        <span class="t-pub__name">학생에게 결과 보여주기</span>
+        <span class="t-pub__state" id="publishState">꺼짐</span>
+      </label>
+      <button type="button" id="toStudentBtn" class="btn-quiet">학생 화면</button>
+    </div>
+    <div class="index-tabs" role="tablist" aria-label="선생님 메뉴">
+      <button type="button" class="index-tab" role="tab" id="tabGrade" data-tab="grade" aria-controls="panelGrade" aria-selected="true">채점</button>
+      <button type="button" class="index-tab" role="tab" id="tabResults" data-tab="results" aria-controls="panelResults" aria-selected="false" tabindex="-1">결과 보기</button>
+      <button type="button" class="index-tab" role="tab" id="tabSetup" data-tab="setup" aria-controls="panelSetup" aria-selected="false" tabindex="-1">정답과 설정</button>
+    </div>
+    <div class="paper paper--wide t-paper">
+      <section id="panelGrade" role="tabpanel" aria-labelledby="tabGrade"></section>
+      <section id="panelResults" role="tabpanel" aria-labelledby="tabResults" hidden></section>
+      <section id="panelSetup" role="tabpanel" aria-labelledby="tabSetup" hidden></section>
+    </div>
+  </main>
 
-  <!-- 선생님 비밀번호 입력 -->
-  <div id="passwordModal" hidden></div>
+  <!-- 선생님 비밀번호 입력: 갱지 쪽지 -->
+  <div id="passwordModal" class="modal-backdrop" hidden>
+    <div class="paper-note" role="dialog" aria-modal="true" aria-labelledby="pwTitle">
+      <h2 id="pwTitle">선생님 확인</h2>
+      <label for="teacherPwInput" class="pw-label">선생님 비밀번호</label>
+      <input type="password" id="teacherPwInput" class="line-input pw-input" autocomplete="off" aria-describedby="pwError">
+      <p id="pwError" class="inline-error" role="alert" hidden></p>
+      <div class="pw-actions">
+        <button type="button" id="pwCancelBtn" class="btn-quiet">취소</button>
+        <button type="button" id="pwOkBtn" class="btn-ink">들어가기</button>
+      </div>
+    </div>
+  </div>
 
   <!-- 알림 줄 -->
   <div id="toast" role="status" aria-live="polite"></div>

@@ -1,3 +1,201 @@
 <script>
-  // 선생님 화면 (다음 작업에서 구현)
+  // ===== 선생님 화면: 로그인, 상단 줄, 탭 =====
+
+  function newTeacherState() {
+    return {
+      pw: '', settings: {}, questions: [], submissions: [], stats: [],
+      tab: 'grade', gradeView: 'byQuestion', selectedQNum: null, selectedRowIndex: null
+    };
+  }
+  var teacherState = newTeacherState();
+
+  var TAB_IDS = { grade: 'tabGrade', results: 'tabResults', setup: 'tabSetup' };
+  var PANEL_IDS = { grade: 'panelGrade', results: 'panelResults', setup: 'panelSetup' };
+  var TAB_ORDER = ['grade', 'results', 'setup'];
+
+  function tEl(id) { return document.getElementById(id); }
+
+  // 채점 대기 = 완료 표시가 안 된 제출 수
+  function countWaiting(submissions) {
+    return (submissions || []).filter(function (s) { return !s.isCompleted; }).length;
+  }
+
+  // ----- 로그인 쪽지 -----
+  function openTeacherLogin() {
+    tEl('teacherPwInput').value = '';
+    tEl('pwError').hidden = true;
+    tEl('pwError').textContent = '';
+    tEl('pwOkBtn').disabled = false;
+    tEl('passwordModal').hidden = false;
+    tEl('teacherPwInput').focus();
+  }
+
+  function closeTeacherLogin() {
+    tEl('passwordModal').hidden = true;
+    tEl('teacherPwInput').value = '';
+    // 쪽지를 닫으면 포커스는 학생 화면의 "선생님" 버튼으로
+    if (!tEl('studentView').hidden) tEl('teacherEntryBtn').focus();
+  }
+
+  function showPwError(message) {
+    var el = tEl('pwError');
+    el.textContent = message;
+    el.hidden = false;
+  }
+
+  async function confirmTeacherLogin() {
+    var pw = tEl('teacherPwInput').value;
+    if (!pw) { showPwError('비밀번호를 입력해 주세요.'); return; }
+    var okBtn = tEl('pwOkBtn');
+    okBtn.disabled = true;
+    tEl('pwError').hidden = true;
+    var res;
+    try {
+      res = await serverCall('verifyTeacherAndGetData', pw);
+    } catch (e) {
+      okBtn.disabled = false;
+      showPwError('연결하지 못했어요. 잠시 뒤에 다시 눌러 주세요.');
+      return;
+    }
+    okBtn.disabled = false;
+    if (!res || !res.success) { showPwError((res && res.message) || '확인하지 못했어요. 다시 시도해 주세요.'); return; }
+    Object.assign(teacherState, newTeacherState());
+    teacherState.pw = pw;
+    applyTeacherData(res);
+    closeTeacherLogin();
+    setMode('teacher');
+    renderTopBar();
+    switchTab('grade');
+    tEl('tabGrade').focus();
+  }
+
+  // 서버 응답을 상태에 넣는다 (화면은 건드리지 않음)
+  function applyTeacherData(res) {
+    teacherState.settings = res.settings || {};
+    teacherState.questions = res.questions || [];
+    teacherState.submissions = res.submissions || [];
+    teacherState.stats = res.questionStats || [];
+  }
+
+  async function refreshTeacherData() {
+    if (!teacherState.pw) return;
+    var res;
+    try {
+      res = await serverCall('verifyTeacherAndGetData', teacherState.pw);
+    } catch (e) {
+      showToast('새로고침하지 못했어요. 연결을 확인해 주세요.', 'error');
+      return;
+    }
+    if (!res || !res.success) { showToast((res && res.message) || '새로고침하지 못했어요.', 'error'); return; }
+    var x = window.scrollX, y = window.scrollY;
+    applyTeacherData(res);
+    renderTopBar();
+    renderActivePanel();
+    window.scrollTo(x, y);
+  }
+
+  function leaveTeacherMode() {
+    Object.assign(teacherState, newTeacherState());
+    tEl('publishSwitch').checked = false;
+    ['panelGrade', 'panelResults', 'panelSetup'].forEach(function (id) { tEl(id).innerHTML = ''; });
+    setMode('student');
+  }
+
+  // ----- 상단 줄 -----
+  function renderTopBar() {
+    var s = teacherState.settings || {};
+    var subs = teacherState.submissions;
+    tEl('tExamTitle').textContent = s.examTitle || '우리들의 답안지';
+    tEl('tCounts').textContent = '제출 ' + subs.length + '명 · 채점 대기 ' + countWaiting(subs) + '명';
+    var on = s.publishResults === true;
+    tEl('publishSwitch').checked = on;
+    tEl('publishState').textContent = on ? '켜짐' : '꺼짐';
+  }
+
+  async function togglePublish(checked) {
+    var sw = tEl('publishSwitch');
+    sw.disabled = true;
+    var res = null;
+    try {
+      res = await serverCall('setPublishResultsStatus', { authPassword: teacherState.pw, publish: checked, markAllCompleted: false });
+    } catch (e) {
+      res = { success: false, message: '연결하지 못했어요. 다시 눌러 주세요.' };
+    }
+    sw.disabled = false;
+    if (res && res.success) {
+      teacherState.settings.publishResults = checked;
+      renderTopBar();
+      showToast(checked ? '결과를 보여주기 시작했어요' : '결과를 다시 가렸어요');
+    } else {
+      renderTopBar(); // 스위치를 서버에 남아 있는 값으로 되돌린다
+      showToast((res && res.message) || '바꾸지 못했어요. 다시 눌러 주세요.', 'error');
+    }
+  }
+
+  // ----- 탭 -----
+  function renderActivePanel() {
+    var t = teacherState.tab;
+    if (t === 'results') renderResultsPanel();
+    else if (t === 'setup') renderSetupPanel();
+    else renderGradePanel();
+  }
+
+  function switchTab(name) {
+    if (!PANEL_IDS[name]) name = 'grade';
+    teacherState.tab = name;
+    TAB_ORDER.forEach(function (key) {
+      var active = key === name;
+      var tab = tEl(TAB_IDS[key]);
+      tab.setAttribute('aria-selected', active ? 'true' : 'false');
+      tab.tabIndex = active ? 0 : -1;
+      tEl(PANEL_IDS[key]).hidden = !active;
+    });
+    renderActivePanel();
+  }
+
+  function onTabKeydown(e) {
+    var i = TAB_ORDER.indexOf(teacherState.tab);
+    var next = -1;
+    if (e.key === 'ArrowRight') next = (i + 1) % TAB_ORDER.length;
+    else if (e.key === 'ArrowLeft') next = (i + TAB_ORDER.length - 1) % TAB_ORDER.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = TAB_ORDER.length - 1;
+    if (next < 0) return;
+    e.preventDefault();
+    switchTab(TAB_ORDER[next]);
+    tEl(TAB_IDS[TAB_ORDER[next]]).focus();
+  }
+
+  // ----- 패널 (다음 작업에서 채움) -----
+  function renderGradePanel() {
+    tEl('panelGrade').innerHTML = '<p class="t-placeholder">채점 화면을 준비하고 있어요.</p>';
+  }
+  function renderResultsPanel() {
+    tEl('panelResults').innerHTML = '<p class="t-placeholder">결과 보기 화면을 준비하고 있어요.</p>';
+  }
+  function renderSetupPanel() {
+    tEl('panelSetup').innerHTML = '<p class="t-placeholder">정답과 설정 화면을 준비하고 있어요.</p>';
+  }
+
+  // ----- 이벤트 -----
+  tEl('tabGrade').parentNode.addEventListener('click', function (e) {
+    var btn = e.target.closest('[data-tab]');
+    if (btn) switchTab(btn.getAttribute('data-tab'));
+  });
+  tEl('tabGrade').parentNode.addEventListener('keydown', onTabKeydown);
+  tEl('publishSwitch').addEventListener('change', function (e) { togglePublish(e.target.checked); });
+  tEl('toStudentBtn').addEventListener('click', leaveTeacherMode);
+  tEl('pwOkBtn').addEventListener('click', function () { confirmTeacherLogin(); });
+  tEl('pwCancelBtn').addEventListener('click', closeTeacherLogin);
+  tEl('passwordModal').addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { e.preventDefault(); closeTeacherLogin(); return; }
+    if (e.key === 'Enter' && e.target === tEl('teacherPwInput')) { e.preventDefault(); confirmTeacherLogin(); return; }
+    if (e.key === 'Tab') {
+      // 쪽지 안에서만 포커스가 돈다
+      var items = [tEl('teacherPwInput'), tEl('pwCancelBtn'), tEl('pwOkBtn')].filter(function (el) { return !el.disabled; });
+      var first = items[0], last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+  });
 </script>
