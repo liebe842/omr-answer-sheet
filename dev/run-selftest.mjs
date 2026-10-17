@@ -1,15 +1,16 @@
-// 사용: node dev/run-selftest.mjs <scenario> [--fail=<serverFn>]
+// 사용: node dev/run-selftest.mjs <scenario> [--fail=<serverFn>] [--width=360]
 import { buildPreview } from './preview.mjs';
-import { previewUrl, runChrome } from './chrome.mjs';
+import { previewUrl, runChrome, narrowUrl } from './chrome.mjs';
 
 const args = process.argv.slice(2);
 const scenario = args.find(a => !a.startsWith('--')) || 'fresh';
+const width = (args.find(a => a.startsWith('--width=')) || '').slice(8);
 const fail = (args.find(a => a.startsWith('--fail=')) || '').slice(7);
 
 buildPreview();
 let query = 'scenario=' + encodeURIComponent(scenario) + '&selftest=1';
 if (fail) query += '&fail=' + encodeURIComponent(fail);
-const r = runChrome(['--virtual-time-budget=10000', '--dump-dom'], previewUrl(query));
+const r = runChrome(['--virtual-time-budget=10000', '--dump-dom', '--window-size=1000,900'], width ? narrowUrl(width, query) : previewUrl(query));
 const m = (r.stdout || '').match(/<pre id="selftest-result">([\s\S]*?)<\/pre>/);
 if (!m) {
   console.log('FAIL: 셀프테스트 결과를 찾지 못했습니다 (scenario=' + scenario + ')');

@@ -1,3 +1,254 @@
 <script>
-  // 학생 화면 (다음 작업에서 구현)
+  // ===== 학생 화면: 답안지 쓰기 =====
+
+  var studentQuestions = [];   // [{qNum, qType, blankCount, points}]
+  var studentAnswers = {};     // {qNum: [칸1, 칸2, ...]}
+  var studentExamTitle = '';
+  var savedSubmission = null;  // 제출 직후 {studentNumber, studentName, answers, examTitle, submittedAt}
+  var isSubmitting = false;
+
+  // 제출 기록 복귀 확인 훅 (다음 작업에서 교체)
+  function tryRestoreSubmission() { return false; }
+
+  function blankCountOf(q) {
+    return Math.max(1, Number(q.blankCount) || 1);
+  }
+
+  function sById(id) { return document.getElementById(id); }
+
+  // 답안지 표 HTML. readOnly 면 버블·입력 대신 적힌 답만 보여준다
+  function renderAnswerSheet(questions, opts) {
+    opts = opts || {};
+    var readOnly = !!opts.readOnly;
+    var answers = opts.answers || {};
+    var html = '<table class="sheet-table answer-table"><thead><tr><th>번호</th><th>답</th><th>배점</th></tr></thead><tbody>';
+    questions.forEach(function (q) {
+      var n = blankCountOf(q);
+      var given = answers[q.qNum] || [];
+      html += '<tr data-row="' + Number(q.qNum) + '"><td class="num">' + Number(q.qNum) + '</td><td class="answer-cell">';
+      for (var b = 0; b < n; b++) {
+        var val = given[b] === undefined || given[b] === null ? '' : String(given[b]);
+        var label = n > 1 ? '<span class="blank-label">(' + (b + 1) + ')</span>' : '';
+        html += '<div class="blank-row">' + label;
+        if (isChoiceType(q.qType)) {
+          var opts2 = getBubbleOptionsForType(q.qType);
+          html += '<span class="bubble-group" role="group" aria-label="' + Number(q.qNum) + '번' + (n > 1 ? ' (' + (b + 1) + ')' : '') + '">';
+          opts2.forEach(function (o) {
+            html += '<button type="button" class="bubble" data-q="' + Number(q.qNum) + '" data-b="' + b + '" data-v="' + escapeHtml(o) + '" aria-pressed="' + (val === o) + '"' + (readOnly ? ' disabled' : '') + '>' + escapeHtml(o) + '</button>';
+          });
+          html += '</span>';
+          if (q.qType === '객관식') {
+            if (readOnly) {
+              if (val && opts2.indexOf(val) < 0) html += '<span class="answer-read">' + escapeHtml(val) + '</span>';
+            } else {
+              html += '<input type="text" class="line-input other-num" data-q="' + Number(q.qNum) + '" data-b="' + b + '" data-kind="other" inputmode="numeric" autocomplete="off" aria-label="' + Number(q.qNum) + '번 다른 번호' + (n > 1 ? ' (' + (b + 1) + ')' : '') + '" value="' + escapeHtml(val) + '">';
+            }
+          }
+        } else if (q.qType === '서술형') {
+          if (readOnly) html += '<div class="answer-read">' + escapeHtml(val) + '</div>';
+          else html += '<textarea class="essay-input" data-q="' + Number(q.qNum) + '" data-b="0" data-kind="text" aria-label="' + Number(q.qNum) + '번 서술형 답">' + escapeHtml(val) + '</textarea>';
+        } else {
+          if (readOnly) html += '<div class="answer-read">' + escapeHtml(val) + '</div>';
+          else html += '<input type="text" class="line-input text-answer" data-q="' + Number(q.qNum) + '" data-b="' + b + '" data-kind="text" autocomplete="off" aria-label="' + Number(q.qNum) + '번' + (n > 1 ? ' (' + (b + 1) + ')' : '') + ' 답" value="' + escapeHtml(val) + '">';
+        }
+        html += '</div>';
+      }
+      html += '</td><td class="mark">' + escapeHtml(q.points) + '</td></tr>';
+    });
+    return html + '</tbody></table>';
+  }
+
+  // 빈 칸이 하나라도 있는 문항 번호 목록
+  function findEmptyQuestions(questions, answers) {
+    var out = [];
+    questions.forEach(function (q) {
+      var arr = (answers && answers[q.qNum]) || [];
+      var empty = false;
+      for (var b = 0; b < blankCountOf(q); b++) {
+        if (String(arr[b] === undefined || arr[b] === null ? '' : arr[b]).trim() === '') empty = true;
+      }
+      if (empty) out.push(q.qNum);
+    });
+    return out;
+  }
+
+  function showStudentStatus(text) {
+    var el = sById('studentStatus');
+    el.textContent = text;
+    el.hidden = !text;
+  }
+
+  function showSubmitError(text) {
+    var el = sById('submitError');
+    el.textContent = text || '';
+    el.hidden = !text;
+  }
+
+  // 화면을 처음 상태로 되돌리고 문항을 불러온다
+  async function loadStudentScreen() {
+    sById('answerForm').hidden = true;
+    sById('emptyCheck').hidden = true;
+    sById('studentAfter').innerHTML = '';
+    showSubmitError('');
+    showStudentStatus('답안지를 불러오는 중…');
+    isSubmitting = false;
+    var btn = sById('submitBtn');
+    btn.disabled = false;
+    btn.textContent = '답안지 내기';
+    try {
+      var data = await serverCall('getStudentInitData');
+      studentExamTitle = data.examTitle || '우리들의 답안지';
+      sById('examTitle').textContent = studentExamTitle;
+      document.title = studentExamTitle;
+      studentQuestions = data.questions || [];
+      studentAnswers = {};
+      studentQuestions.forEach(function (q) {
+        studentAnswers[q.qNum] = new Array(blankCountOf(q)).fill('');
+      });
+      if (studentQuestions.length === 0) {
+        sById('answerTable').innerHTML = '';
+        showStudentStatus('등록된 문항이 없어요.');
+        return;
+      }
+      sById('answerTable').innerHTML = renderAnswerSheet(studentQuestions);
+      showStudentStatus('');
+      sById('answerForm').hidden = false;
+      tryRestoreSubmission();
+    } catch (e) {
+      showStudentStatus('답안지를 불러오지 못했어요. 새로고침해 주세요.');
+    }
+  }
+
+  // 한 칸의 값을 바꾸고 화면(버블 눌림, 다른 번호 입력)을 맞춘다
+  function setBlankValue(qNum, b, val, source) {
+    var row = document.querySelector('#answerTable tr[data-row="' + qNum + '"]');
+    if (!row) return;
+    studentAnswers[qNum][b] = val;
+    var bubbles = row.querySelectorAll('.bubble[data-b="' + b + '"]');
+    Array.prototype.forEach.call(bubbles, function (el) {
+      el.setAttribute('aria-pressed', el.getAttribute('data-v') === val ? 'true' : 'false');
+    });
+    if (source !== 'input') {
+      var other = row.querySelector('input[data-kind="other"][data-b="' + b + '"]');
+      if (other) other.value = val;
+    }
+    sById('emptyCheck').hidden = true;
+  }
+
+  function onAnswerClick(ev) {
+    var btn = ev.target.closest ? ev.target.closest('.bubble') : null;
+    if (!btn || btn.disabled) return;
+    var qNum = Number(btn.getAttribute('data-q'));
+    var b = Number(btn.getAttribute('data-b'));
+    var v = btn.getAttribute('data-v');
+    // 같은 칸을 다시 누르면 해제
+    setBlankValue(qNum, b, studentAnswers[qNum][b] === v ? '' : v, 'bubble');
+  }
+
+  function onAnswerInput(ev) {
+    var el = ev.target;
+    if (!el.getAttribute || !el.getAttribute('data-kind')) return;
+    var qNum = Number(el.getAttribute('data-q'));
+    var b = Number(el.getAttribute('data-b'));
+    if (el.getAttribute('data-kind') === 'other') {
+      // 보기에 있는 번호면 버블도 맞추고, 아니면 버블만 비운 채 입력값을 답으로 둔다
+      setBlankValue(qNum, b, el.value.trim(), 'input');
+    } else {
+      studentAnswers[qNum][b] = el.value;
+      sById('emptyCheck').hidden = true;
+    }
+  }
+
+  function showEmptyCheck(list) {
+    var box = sById('emptyCheck');
+    box.innerHTML = '<div>아직 안 쓴 문항이 있어요: ' + list.map(function (n) { return Number(n) + '번'; }).join(', ') + '</div>' +
+      '<button type="button" class="btn-ink" data-action="submit-anyway">그래도 내기</button>' +
+      '<button type="button" class="btn-quiet" data-action="review">다시 보기</button>';
+    box.hidden = false;
+  }
+
+  function focusFirstEmpty() {
+    var list = findEmptyQuestions(studentQuestions, studentAnswers);
+    if (list.length === 0) return;
+    var target = document.querySelector('#answerTable tr[data-row="' + list[0] + '"] [data-q]');
+    if (target) target.focus();
+  }
+
+  function onEmptyCheckClick(ev) {
+    var btn = ev.target.closest ? ev.target.closest('button[data-action]') : null;
+    if (!btn) return;
+    if (btn.getAttribute('data-action') === 'review') {
+      sById('emptyCheck').hidden = true;
+      focusFirstEmpty();
+    } else {
+      submitAnswers({ skipEmptyCheck: true });
+    }
+  }
+
+  // 답안지 내기. 번호·이름 확인, 빈 문항 확인(건너뛰기 가능) 뒤 서버로 보낸다
+  async function submitAnswers(opts) {
+    if (isSubmitting) return;
+    var skip = !!(opts && opts.skipEmptyCheck);
+    var numEl = sById('studentNumber');
+    var nameEl = sById('studentName');
+    var number = numEl.value.trim();
+    var name = nameEl.value.trim();
+    showSubmitError('');
+    if (!number || !name) {
+      sById('emptyCheck').hidden = true;
+      showSubmitError('번호와 이름을 써주세요.');
+      (!number ? numEl : nameEl).focus();
+      return;
+    }
+    if (!skip) {
+      var empties = findEmptyQuestions(studentQuestions, studentAnswers);
+      if (empties.length > 0) {
+        showEmptyCheck(empties);
+        return;
+      }
+    }
+    sById('emptyCheck').hidden = true;
+
+    var answers = {};
+    studentQuestions.forEach(function (q) {
+      answers[q.qNum] = studentAnswers[q.qNum].slice();
+    });
+    var btn = sById('submitBtn');
+    isSubmitting = true;
+    btn.disabled = true;
+    btn.textContent = '내는 중…';
+    try {
+      var res = await serverCall('submitStudentAnswers', { studentNumber: number, studentName: name, answers: answers });
+      if (!res || !res.success) {
+        showSubmitError((res && res.message) || '답안지를 내지 못했어요. 다시 눌러 주세요.');
+        return;
+      }
+      savedSubmission = {
+        studentNumber: number,
+        studentName: name,
+        answers: answers,
+        examTitle: studentExamTitle,
+        submittedAt: Date.now()
+      };
+      sById('answerForm').hidden = true;
+      if (typeof showWaiting === 'function') showWaiting(savedSubmission);
+    } catch (e) {
+      showSubmitError('답안지를 내지 못했어요. 다시 눌러 주세요.');
+    } finally {
+      isSubmitting = false;
+      btn.disabled = false;
+      btn.textContent = '답안지 내기';
+    }
+  }
+
+  // 이벤트 위임
+  sById('answerTable').addEventListener('click', onAnswerClick);
+  sById('answerTable').addEventListener('input', onAnswerInput);
+  sById('emptyCheck').addEventListener('click', onEmptyCheckClick);
+  sById('submitBtn').addEventListener('click', function () { submitAnswers(); });
+  sById('teacherEntryBtn').addEventListener('click', function () {
+    if (typeof openTeacherLogin === 'function') openTeacherLogin();
+  });
+
+  loadStudentScreen();
 </script>

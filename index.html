@@ -12,7 +12,30 @@
 </head>
 <body>
   <!-- 학생 화면: 답안지 작성 / 대기 / 결과가 이 안에 그려진다 -->
-  <main id="studentView"></main>
+  <main id="studentView">
+    <div class="student-top">
+      <button type="button" id="teacherEntryBtn" class="link-quiet">선생님</button>
+    </div>
+    <div class="paper" id="studentPaper">
+      <h1 class="paper-title" id="examTitle">우리들의 답안지</h1>
+      <table class="sheet-table info-table">
+        <tr>
+          <th><label for="studentNumber">번호</label></th>
+          <td><input type="text" id="studentNumber" class="line-input info-input" inputmode="numeric" autocomplete="off"></td>
+          <th><label for="studentName">이름</label></th>
+          <td><input type="text" id="studentName" class="line-input info-input" autocomplete="off"></td>
+        </tr>
+      </table>
+      <p id="studentStatus" class="inline-note" hidden></p>
+      <div id="answerForm" hidden>
+        <div class="table-wrap"><div id="answerTable"></div></div>
+        <div id="emptyCheck" class="inline-note" hidden></div>
+        <p id="submitError" class="inline-error" role="alert" hidden></p>
+        <div class="submit-row"><button type="button" id="submitBtn" class="btn-ink">답안지 내기</button></div>
+      </div>
+      <div id="studentAfter"></div>
+    </div>
+  </main>
 
   <!-- 선생님 화면: 로그인 후 채점 / 결과 보기 / 정답과 설정 -->
   <main id="teacherView" hidden></main>

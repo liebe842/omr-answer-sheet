@@ -24,7 +24,6 @@
     font-family: var(--font-body);
     font-weight: 400;
     line-height: 1.6;
-    overflow-x: hidden;
     padding: 18px 12px 48px;
   }
   .desk { background: var(--desk); }
@@ -86,7 +85,7 @@
     border-radius: 0;
     background: transparent;
     color: var(--ink);
-    font: 400 15px var(--font-body);
+    font: 400 16px var(--font-body);
     padding: 6px 2px;
     min-width: 120px;
   }
@@ -99,7 +98,7 @@
     border-radius: 0;
     background: var(--paper-lift);
     color: var(--ink);
-    font: 400 15px/1.7 var(--font-body);
+    font: 400 16px/1.7 var(--font-body);
     padding: 8px;
     resize: vertical;
   }
@@ -127,7 +126,7 @@
   }
 
   /* 빨간 펜: 선생님 표시 전용 */
-  .red-pen { font-family: var(--font-pen); color: var(--red-pen); font-size: 24px; line-height: 1.1; }
+  .red-pen { font-family: var(--font-pen); font-weight: 400; color: var(--red-pen); font-size: 24px; line-height: 1.1; }
   .red-circle {
     display: inline-block;
     padding: 2px 14px;
@@ -251,7 +250,23 @@
     z-index: 100;
   }
   #toast.show, .toast.show { opacity: 1; }
-  #toast.error, .toast.error { background: var(--ink); border-left: 4px solid var(--red-pen); }
+  #toast.error, .toast.error { background: var(--paper); color: var(--ink); border: 2px solid var(--ink); }
+
+  /* 학생 답안지 */
+  .student-top { max-width: 760px; margin: 0 auto; text-align: right; }
+  .info-table th { width: 56px; }
+  .info-table td { padding: 2px 8px; }
+  .info-input { width: 100%; min-width: 0; text-align: center; border-bottom: 0; }
+  .answer-table { margin-top: 10px; }
+  .answer-table td.num { vertical-align: top; padding-top: 14px; }
+  .answer-table td.mark { font-size: 12px; }
+  .blank-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0 8px; }
+  .blank-label { font-size: 12px; font-weight: 700; min-width: 24px; }
+  .line-input.other-num { width: 72px; min-width: 0; text-align: center; font-size: 16px; }
+  .answer-cell .line-input.text-answer { width: 100%; }
+  .answer-read { padding: 6px 2px; overflow-wrap: anywhere; }
+  .submit-row { text-align: center; margin-top: 16px; }
+  #emptyCheck .btn-ink, #emptyCheck .btn-quiet { margin: 8px 4px 0; }
 
   /* 선생님 2단 -> 1단 */
   @media (max-width: 900px) {
@@ -263,6 +278,11 @@
     .sheet-table th, .sheet-table td { padding: 4px 5px; }
     .bubble-group { gap: 0; }
     .line-input { min-width: 0; width: 100%; }
+    .answer-table th { white-space: nowrap; padding-left: 2px; padding-right: 2px; }
+    .answer-table td.num { width: 34px; padding-left: 2px; padding-right: 2px; }
+    .answer-table td.mark { width: 36px; padding-left: 2px; padding-right: 2px; }
+    .answer-table td.answer-cell { padding-left: 2px; padding-right: 2px; }
+    .blank-row { gap: 0 4px; }
   }
 
   @media (prefers-reduced-motion: reduce) {

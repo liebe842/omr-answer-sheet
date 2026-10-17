@@ -239,6 +239,141 @@
     });
   });
 
+  // ===== Task 3: 학생 답안지 (작성 중) =====
+  function pressBubble(q, b, v) {
+    document.querySelector('.bubble[data-q="' + q + '"][data-b="' + b + '"][data-v="' + v + '"]').click();
+  }
+  function typeInto(el, v) {
+    el.value = v;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  function fillInfo(num, name) {
+    document.getElementById('studentNumber').value = num;
+    document.getElementById('studentName').value = name;
+  }
+  function answerAll() {
+    pressBubble(1, 0, '3'); pressBubble(2, 0, '2'); pressBubble(2, 1, '4'); pressBubble(3, 0, 'ㄴ'); pressBubble(4, 0, 'O');
+    var t = document.querySelectorAll('input[data-q="5"]');
+    typeInto(t[0], '세종'); typeInto(t[1], '장영실');
+    typeInto(document.querySelector('textarea[data-q="6"]'), '서술');
+  }
+  function lastSubmitCall() {
+    return window.__gasCalls.filter(function (c) { return c.fn === 'submitStudentAnswers'; }).pop();
+  }
+  test('student: 문항 6개 행, 제목, 라벨 연결, 배점 열', async function () {
+    await loadStudentScreen();
+    assertEq(document.getElementById('examTitle').textContent, '사회 2단원 평가 답안지');
+    assertEq(document.querySelectorAll('#answerTable tr[data-row]').length, 6);
+    assertEq(document.querySelector('label[for="studentNumber"]').textContent, '번호');
+    assertEq(document.querySelector('label[for="studentName"]').textContent, '이름');
+    assertEq(Array.prototype.map.call(document.querySelectorAll('#answerTable thead th'), function (t) { return t.textContent; }), ['번호', '답', '배점']);
+    assertEq(studentQuestions.length, 6);
+  });
+  test('student: 2번 문항에 (1)(2) 버블 그룹 두 개, 그룹 aria-label', async function () {
+    await loadStudentScreen();
+    var g = document.querySelectorAll('tr[data-row="2"] [role="group"]');
+    assertEq(g.length, 2);
+    assertEq(g[0].getAttribute('aria-label'), '2번 (1)');
+    assertEq(document.querySelectorAll('tr[data-row="1"] [role="group"]').length, 1);
+  });
+  test('student: 버블 클릭으로 선택, 다시 클릭하면 해제', async function () {
+    await loadStudentScreen();
+    pressBubble(1, 0, '3');
+    assertEq(studentAnswers[1][0], '3');
+    assertEq(document.querySelector('.bubble[data-q="1"][data-v="3"]').getAttribute('aria-pressed'), 'true');
+    pressBubble(1, 0, '3');
+    assertEq(studentAnswers[1][0], '');
+    assertEq(document.querySelector('.bubble[data-q="1"][data-v="3"]').getAttribute('aria-pressed'), 'false');
+  });
+  test('student: 객관식 다른 번호 입력과 버블 동기화', async function () {
+    await loadStudentScreen();
+    var inp = document.querySelector('input.other-num[data-q="1"]');
+    assertEq(inp.getAttribute('aria-label'), '1번 다른 번호');
+    typeInto(inp, '4');
+    assertEq(studentAnswers[1][0], '4');
+    assertEq(document.querySelector('.bubble[data-q="1"][data-v="4"]').getAttribute('aria-pressed'), 'true');
+    typeInto(inp, '9');
+    assertEq(studentAnswers[1][0], '9');
+    assertEq(document.querySelectorAll('tr[data-row="1"] .bubble[aria-pressed="true"]').length, 0);
+    pressBubble(1, 0, '2');
+    assertEq(inp.value, '2');
+  });
+  test('student: findEmptyQuestions', function () {
+    var qs = [{ qNum: 1, blankCount: 1 }, { qNum: 2, blankCount: 2 }, { qNum: 3, blankCount: 1 }];
+    assertEq(findEmptyQuestions(qs, { 1: ['3'], 2: ['1', ''], 3: ['  '] }), [2, 3]);
+    assertEq(findEmptyQuestions(qs, { 1: ['3'], 2: ['1', '2'], 3: ['a'] }), []);
+  });
+  test('student: 번호·이름이 비면 서버 호출 없이 인라인 오류', async function () {
+    await loadStudentScreen();
+    fillInfo('', '');
+    var n = window.__gasCalls.length;
+    await submitAnswers({ skipEmptyCheck: true });
+    assertEq(window.__gasCalls.length, n);
+    assertEq(document.getElementById('submitError').textContent, '번호와 이름을 써주세요.');
+    assertEq(document.activeElement.id, 'studentNumber');
+  });
+  test('student: 빈 문항이 있으면 #emptyCheck 안내, 다시 보기는 첫 빈 문항으로', async function () {
+    await loadStudentScreen();
+    fillInfo('7', '홍길동');
+    pressBubble(1, 0, '3');
+    var n = window.__gasCalls.length;
+    await submitAnswers();
+    var box = document.getElementById('emptyCheck');
+    assertTrue(!box.hidden, '안내 보임');
+    assertTrue(box.textContent.indexOf('아직 안 쓴 문항이 있어요: 2번, 3번, 4번, 5번, 6번') >= 0, box.textContent);
+    assertEq(window.__gasCalls.length, n);
+    var btns = Array.prototype.map.call(box.querySelectorAll('button'), function (b) { return b.textContent; });
+    assertEq(btns, ['그래도 내기', '다시 보기']);
+    box.querySelector('[data-action="review"]').click();
+    assertTrue(box.hidden, '안내 닫힘');
+    assertEq(document.activeElement.getAttribute('data-q'), '2');
+  });
+  test('student: 모두 답하고 제출하면 payload의 5번은 길이 2 배열', async function () {
+    await loadStudentScreen();
+    fillInfo('7', '홍길동');
+    answerAll();
+    await submitAnswers();
+    var call = lastSubmitCall();
+    assertEq(call.payload.studentNumber, '7');
+    assertEq(call.payload.studentName, '홍길동');
+    assertEq(call.payload.answers[5], ['세종', '장영실']);
+    assertEq(call.payload.answers[2], ['2', '4']);
+    assertTrue(document.getElementById('answerForm').hidden, '폼 숨김');
+    assertEq(savedSubmission.examTitle, '사회 2단원 평가 답안지');
+    assertEq(savedSubmission.studentName, '홍길동');
+    assertTrue(typeof savedSubmission.submittedAt === 'number');
+  });
+  test('student: 위험 문자 이름은 DOM 요소가 되지 않는다', async function () {
+    await loadStudentScreen();
+    fillInfo('8', '<b>"민\'수"</b>');
+    answerAll();
+    await submitAnswers();
+    assertEq(lastSubmitCall().payload.studentName, '<b>"민\'수"</b>');
+    assertEq(document.querySelectorAll('#studentView b').length, 0);
+  });
+  test('student: 서버 실패 메시지는 .inline-error로, 버튼은 되돌아온다', async function () {
+    await loadStudentScreen();
+    fillInfo('7', '홍길동'); // 앞 테스트에서 이미 제출한 학생이라 스텁이 거절
+    answerAll();
+    await submitAnswers();
+    var err = document.getElementById('submitError');
+    assertTrue(!err.hidden && err.textContent.length > 0, '오류 문구');
+    assertTrue(err.classList.contains('inline-error'), 'inline-error');
+    assertEq(document.getElementById('submitBtn').disabled, false);
+    assertEq(document.getElementById('submitBtn').textContent, '답안지 내기');
+    assertTrue(!document.getElementById('answerForm').hidden, '폼 유지');
+  });
+  test('student: 가로 스크롤 없음', async function () {
+    await loadStudentScreen();
+    assertTrue(document.documentElement.scrollWidth <= window.innerWidth,
+      'scrollWidth ' + document.documentElement.scrollWidth + ' > ' + window.innerWidth);
+  });
+  test('student: 빈 시나리오는 안내 문구', async function () {
+    await loadStudentScreen();
+    assertTrue(document.getElementById('studentStatus').textContent.indexOf('등록된 문항이 없어요.') >= 0);
+    assertTrue(document.getElementById('answerForm').hidden, '폼 숨김');
+  }, { scenario: 'empty' });
+
   // ===== 실행 =====
   async function runAll() {
     var result = { pass: 0, fail: 0, failures: [] };
@@ -256,6 +391,7 @@
       }
     }
     window.__selftest = result;
+    try { if (window.parent !== window) window.parent.postMessage({ __selftest: result }, '*'); } catch (e) {}
     var pre = document.createElement('pre');
     pre.id = 'selftest-result';
     pre.textContent = JSON.stringify(result);
