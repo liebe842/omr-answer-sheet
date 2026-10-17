@@ -864,6 +864,74 @@
     assertEq(tById('teacherView').querySelectorAll('img').length, 0);
   }, { scenario: 'teacher' });
 
+  test('teacher: 새로고침 응답이 늦게 와도 학생 화면으로 나간 뒤에는 반영하지 않는다', async function () {
+    await teacherLogin('1234');
+    var rendered = 0, orig = window.renderTopBar;
+    window.renderTopBar = function () { rendered++; return orig.apply(this, arguments); };
+    var p = refreshTeacherData();
+    tById('toStudentBtn').click();
+    await p;
+    window.renderTopBar = orig;
+    assertEq(teacherState.submissions, []);
+    assertEq(teacherState.questions, []);
+    assertEq(teacherState.pw, '');
+    assertEq(rendered, 0);
+  }, { scenario: 'teacher' });
+  test('teacher: 공개 스위치 응답이 늦게 와도 나간 뒤에는 토스트가 없다', async function () {
+    await teacherLogin('1234');
+    tById('toast').textContent = '';
+    tById('publishSwitch').click();
+    tById('toStudentBtn').click();
+    await sleep(80);
+    assertEq(tById('toast').textContent, '');
+    assertEq(teacherState.settings, {});
+  }, { scenario: 'teacher' });
+  test('teacher: Enter 를 두 번 눌러도 확인 요청은 한 번만 간다', async function () {
+    if (!tById('teacherView').hidden) tById('toStudentBtn').click();
+    openTeacherLogin();
+    var before = window.__gasCalls.filter(function (c) { return c.fn === 'verifyTeacherAndGetData'; }).length;
+    tById('teacherPwInput').value = '1234';
+    var ev = function () { tById('teacherPwInput').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); };
+    ev(); ev();
+    await sleep(100);
+    var after = window.__gasCalls.filter(function (c) { return c.fn === 'verifyTeacherAndGetData'; }).length;
+    assertEq(after - before, 1);
+    assertEq(tById('teacherView').hidden, false);
+  }, { scenario: 'teacher' });
+  test('teacher: 확인 중에 취소하면 학생 화면에 남는다', async function () {
+    if (!tById('teacherView').hidden) tById('toStudentBtn').click();
+    openTeacherLogin();
+    tById('teacherPwInput').value = '1234';
+    var p = confirmTeacherLogin();
+    tById('pwCancelBtn').click();
+    await p;
+    assertEq(tById('teacherView').hidden, true);
+    assertEq(tById('studentView').hidden, false);
+    assertEq(teacherState.pw, '');
+    assertEq(tById('pwOkBtn').disabled, false);
+  }, { scenario: 'teacher' });
+  test('teacher: 공개 스위치를 누른 뒤에도 포커스가 스위치에 남는다', async function () {
+    await teacherLogin('1234');
+    tById('publishSwitch').focus();
+    tById('publishSwitch').click();
+    await sleep(80);
+    assertEq(document.activeElement.id, 'publishSwitch');
+    tById('publishSwitch').click();
+    await sleep(80);
+    assertEq(document.activeElement.id, 'publishSwitch');
+    assertEq(tById('publishSwitch').hasAttribute('aria-busy') && tById('publishSwitch').getAttribute('aria-busy') === 'true', false);
+  }, { scenario: 'teacher' });
+  test('teacher: 틀린 비밀번호는 글자가 선택되어 바로 다시 쓸 수 있다', async function () {
+    if (!tById('teacherView').hidden) tById('toStudentBtn').click();
+    openTeacherLogin();
+    tById('teacherPwInput').value = '9999';
+    await confirmTeacherLogin();
+    var el = tById('teacherPwInput');
+    assertEq([el.selectionStart, el.selectionEnd], [0, 4]);
+    assertEq(document.activeElement.id, 'teacherPwInput');
+    closeTeacherLogin();
+  }, { scenario: 'teacher' });
+
   // ===== 실행 =====
   async function runAll() {
     var result = { pass: 0, fail: 0, failures: [] };

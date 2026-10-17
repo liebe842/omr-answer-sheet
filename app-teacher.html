@@ -8,6 +8,12 @@
     };
   }
   var teacherState = newTeacherState();
+  // 로그인 성공 / 나가기마다 올라가는 번호: 늦게 온 응답이 지난 세션을 건드리지 못하게 한다
+  var teacherSession = 0;
+  // 로그인 확인 중 표시와, 쪽지를 열고 닫을 때마다 올라가는 번호
+  var verifying = false;
+  var loginSeq = 0;
+  var publishing = false;
 
   var TAB_IDS = { grade: 'tabGrade', results: 'tabResults', setup: 'tabSetup' };
   var PANEL_IDS = { grade: 'panelGrade', results: 'panelResults', setup: 'panelSetup' };
@@ -22,6 +28,7 @@
 
   // ----- 로그인 쪽지 -----
   function openTeacherLogin() {
+    loginSeq++;
     tEl('teacherPwInput').value = '';
     tEl('pwError').hidden = true;
     tEl('pwError').textContent = '';
@@ -31,10 +38,17 @@
   }
 
   function closeTeacherLogin() {
+    loginSeq++;
     tEl('passwordModal').hidden = true;
     tEl('teacherPwInput').value = '';
     // 쪽지를 닫으면 포커스는 학생 화면의 "선생님" 버튼으로
     if (!tEl('studentView').hidden) tEl('teacherEntryBtn').focus();
+  }
+
+  function selectPwText() {
+    var el = tEl('teacherPwInput');
+    el.focus();
+    el.select();
   }
 
   function showPwError(message) {
@@ -45,20 +59,25 @@
 
   async function confirmTeacherLogin() {
     var pw = tEl('teacherPwInput').value;
+    if (verifying) return;
     if (!pw) { showPwError('비밀번호를 입력해 주세요.'); return; }
     var okBtn = tEl('pwOkBtn');
+    var seq = loginSeq;
+    verifying = true;
     okBtn.disabled = true;
     tEl('pwError').hidden = true;
     var res;
     try {
       res = await serverCall('verifyTeacherAndGetData', pw);
     } catch (e) {
-      okBtn.disabled = false;
-      showPwError('연결하지 못했어요. 잠시 뒤에 다시 눌러 주세요.');
-      return;
+      res = null;
     }
+    verifying = false;
     okBtn.disabled = false;
-    if (!res || !res.success) { showPwError((res && res.message) || '확인하지 못했어요. 다시 시도해 주세요.'); return; }
+    if (seq !== loginSeq) return; // 확인하는 사이 쪽지를 닫았다
+    if (res === null) { showPwError('연결하지 못했어요. 잠시 뒤에 다시 눌러 주세요.'); selectPwText(); return; }
+    if (!res || !res.success) { showPwError((res && res.message) || '확인하지 못했어요. 다시 시도해 주세요.'); selectPwText(); return; }
+    teacherSession++;
     Object.assign(teacherState, newTeacherState());
     teacherState.pw = pw;
     applyTeacherData(res);
@@ -79,13 +98,15 @@
 
   async function refreshTeacherData() {
     if (!teacherState.pw) return;
+    var session = teacherSession;
     var res;
     try {
       res = await serverCall('verifyTeacherAndGetData', teacherState.pw);
     } catch (e) {
-      showToast('새로고침하지 못했어요. 연결을 확인해 주세요.', 'error');
+      if (session === teacherSession) showToast('새로고침하지 못했어요. 연결을 확인해 주세요.', 'error');
       return;
     }
+    if (session !== teacherSession) return; // 그 사이 선생님 화면을 나갔다
     if (!res || !res.success) { showToast((res && res.message) || '새로고침하지 못했어요.', 'error'); return; }
     var x = window.scrollX, y = window.scrollY;
     applyTeacherData(res);
@@ -95,6 +116,7 @@
   }
 
   function leaveTeacherMode() {
+    teacherSession++;
     Object.assign(teacherState, newTeacherState());
     tEl('publishSwitch').checked = false;
     ['panelGrade', 'panelResults', 'panelSetup'].forEach(function (id) { tEl(id).innerHTML = ''; });
@@ -114,14 +136,19 @@
 
   async function togglePublish(checked) {
     var sw = tEl('publishSwitch');
-    sw.disabled = true;
+    if (publishing) { renderTopBar(); return; } // 처리 중에 또 눌러도 서버에는 한 번만
+    publishing = true;
+    sw.setAttribute('aria-busy', 'true'); // disabled 로 막으면 키보드 포커스를 잃는다
+    var session = teacherSession;
     var res = null;
     try {
       res = await serverCall('setPublishResultsStatus', { authPassword: teacherState.pw, publish: checked, markAllCompleted: false });
     } catch (e) {
       res = { success: false, message: '연결하지 못했어요. 다시 눌러 주세요.' };
     }
-    sw.disabled = false;
+    publishing = false;
+    sw.removeAttribute('aria-busy');
+    if (session !== teacherSession) return;
     if (res && res.success) {
       teacherState.settings.publishResults = checked;
       renderTopBar();
