@@ -182,7 +182,7 @@ function getSettingsMap() {
 
 // 학생 화면용 초기 데이터 불러오기
 function getStudentInitData() {
-  initialSetup();
+  // 시트 초기화는 doGet()에서 이미 수행됨
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const settings = getSettingsMap();
   const answerSheet = ss.getSheetByName('정답설정');
@@ -191,7 +191,7 @@ function getStudentInitData() {
   const questions = [];
   for (let i = 1; i < rows.length; i++) {
     if (!rows[i][0] && !rows[i][1] && !rows[i][3]) continue;
-    const qNum = Number(rows[i][0]) || i;
+    const qNum = Number(rows[i][0]) || (questions.length + 1); // 빈 문항번호는 유효 문항 순번으로 통일
     const qType = normalizeQuestionType(rows[i][1]);
     const rawAnsStr = String(rows[i][3] || '');
     const slots = parseAnswerSlots(rawAnsStr, qType);
@@ -383,7 +383,7 @@ function submitStudentAnswers(payload) {
     
     for (let i = 1; i < qRows.length; i++) {
       if (!qRows[i][0] && !qRows[i][1] && !qRows[i][3]) continue;
-      const qNum = Number(qRows[i][0]) || i;
+      const qNum = Number(qRows[i][0]) || (validQNums.length + 1);
       validQNums.push(qNum);
       const userArrRaw = Array.isArray(studentAnswers[qNum]) ? studentAnswers[qNum] : [studentAnswers[qNum] || ''];
       
@@ -481,7 +481,7 @@ function checkStudentResultStatus(payload) {
   
   for (let i = 1; i < qRows.length; i++) {
     if (!qRows[i][0] && !qRows[i][1] && !qRows[i][3]) continue;
-    const qNum = Number(qRows[i][0]) || i;
+    const qNum = Number(qRows[i][0]) || (gradingDetails.length + 1);
     const qType = normalizeQuestionType(qRows[i][1]);
     const maxPts = Number(qRows[i][4]) || 0;
     maxScore += maxPts;
@@ -530,7 +530,7 @@ function checkStudentResultStatus(payload) {
 
 // 선생님 모드 접속 및 전체 데이터 조회
 function verifyTeacherAndGetData(passwordInput) {
-  initialSetup();
+  // 시트 초기화는 doGet()에서 이미 수행됨 (새로고침마다 반복 호출되므로 생략)
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const settings = getSettingsMap();
   
@@ -546,7 +546,7 @@ function verifyTeacherAndGetData(passwordInput) {
   for (let i = 1; i < qRows.length; i++) {
     if (!qRows[i][0] && !qRows[i][1] && !qRows[i][3]) continue;
     validQRows.push(qRows[i]);
-    const qNum = Number(qRows[i][0]) || i;
+    const qNum = Number(qRows[i][0]) || (questions.length + 1);
     const qType = normalizeQuestionType(qRows[i][1]);
     const rawAnsStr = String(qRows[i][3] || '');
     const slots = parseAnswerSlots(rawAnsStr, qType);
@@ -617,6 +617,7 @@ function verifyTeacherAndGetData(passwordInput) {
 
     submissions.push({
       rowIndex: i + 1,
+      rowKey: getSubmissionRowKey(rRows[i]),
       time: String(timeVal),
       studentNumber: String(rRows[i][1]),
       studentName: String(rRows[i][2]),
@@ -659,6 +660,12 @@ function verifyTeacherAndGetData(passwordInput) {
   };
 }
 
+// 제출결과 행 식별값 (제출일시|번호|이름): 채점 저장 시 행 번호가 같은 학생을 가리키는지 확인용
+function getSubmissionRowKey(row) {
+  const ts = row[0] instanceof Date ? row[0].getTime() : String(row[0]);
+  return [ts, String(row[1]).trim(), String(row[2]).trim()].join('|');
+}
+
 // ★ 선생님 수동 채점 (서술형 및 개별 문항 점수 변경 시 총점 자동 합산 + 코멘트 저장)
 function updateStudentQuestionGrade(payload) {
   const lock = LockService.getScriptLock();
@@ -673,8 +680,16 @@ function updateStudentQuestionGrade(payload) {
     
     const resultSheet = ss.getSheetByName('제출결과');
     const rowIndex = Number(payload.rowIndex);
+    if (!(rowIndex >= 2 && rowIndex <= resultSheet.getLastRow())) {
+      return { success: false, message: '제출 기록을 찾을 수 없습니다. 새로고침 후 다시 시도해 주세요.' };
+    }
     const rowValues = resultSheet.getRange(rowIndex, 1, 1, resultSheet.getLastColumn()).getValues()[0];
-    
+
+    // 화면을 불러온 뒤 기록 초기화/삭제로 행이 바뀌었으면 다른 학생 행에 저장되지 않도록 차단
+    if (getSubmissionRowKey(rowValues) !== String(payload.rowKey)) {
+      return { success: false, message: '제출 기록이 변경되었습니다. 새로고침 후 다시 채점해 주세요.' };
+    }
+
     let perQMap = {};
     try {
       if (rowValues[7]) perQMap = JSON.parse(String(rowValues[7]));
@@ -726,34 +741,43 @@ function updateStudentQuestionGrade(payload) {
 
 // 결과 일괄 공개 스위치 제어 (켤 때 미완료 학생들도 일괄 완료 처리할지 선택 가능)
 function setPublishResultsStatus(payload) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const settings = getSettingsMap();
-  
-  if (String(payload.authPassword).trim() !== String(settings.teacherPassword).trim()) {
-    return { success: false, message: '권한이 없습니다.' };
-  }
-  
-  const configSheet = ss.getSheetByName('환경설정');
-  const data = configSheet.getDataRange().getValues();
-  for (let i = 1; i < data.length; i++) {
-    if (String(data[i][0]).trim() === 'publishResults') {
-      configSheet.getRange(i + 1, 2).setValue(payload.publish ? 'TRUE' : 'FALSE');
-      break;
-    }
-  }
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
 
-  // 일괄 공개를 켤 때 모든 제출 학생의 채점완료여부를 TRUE로 활성화
-  if (payload.publish && payload.markAllCompleted) {
-    const resultSheet = ss.getSheetByName('제출결과');
-    const lastRow = resultSheet.getLastRow();
-    if (lastRow > 1) {
-      const completeRange = resultSheet.getRange(2, 6, lastRow - 1, 1);
-      const vals = completeRange.getValues().map(() => ['TRUE']);
-      completeRange.setValues(vals);
-    }
-  }
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const settings = getSettingsMap();
   
-  return { success: true };
+    if (String(payload.authPassword).trim() !== String(settings.teacherPassword).trim()) {
+      return { success: false, message: '권한이 없습니다.' };
+    }
+  
+    const configSheet = ss.getSheetByName('환경설정');
+    const data = configSheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      if (String(data[i][0]).trim() === 'publishResults') {
+        configSheet.getRange(i + 1, 2).setValue(payload.publish ? 'TRUE' : 'FALSE');
+        break;
+      }
+    }
+
+    // 일괄 공개를 켤 때 모든 제출 학생의 채점완료여부를 TRUE로 활성화
+    if (payload.publish && payload.markAllCompleted) {
+      const resultSheet = ss.getSheetByName('제출결과');
+      const lastRow = resultSheet.getLastRow();
+      if (lastRow > 1) {
+        const completeRange = resultSheet.getRange(2, 6, lastRow - 1, 1);
+        const vals = completeRange.getValues().map(() => ['TRUE']);
+        completeRange.setValues(vals);
+      }
+    }
+  
+    return { success: true };
+  } catch (err) {
+    return { success: false, message: '공개 설정 오류: ' + err.message };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // 선생님 모드에서 정답 및 설정 저장 (시트 드롭다운 및 C열 자동계산 수식 유지!)
@@ -804,7 +828,12 @@ function saveTeacherConfig(payload) {
     });
     
     if (rowsToWrite.length > 0) {
-      answerSheet.getRange(2, 1, rowsToWrite.length, 6).setNumberFormat('@');
+      // 이전 버전에서 A~F열 전체에 걸어둔 텍스트 서식(@)을 지워 번호/배점은 숫자, 부분점수는 체크박스(불리언)로 저장
+      // (서식만 지우며 B열 드롭다운·F열 체크박스 같은 데이터 확인 규칙은 유지됨)
+      const dataRowCount = Math.max(rowsToWrite.length, answerSheet.getMaxRows() - 1);
+      answerSheet.getRange(2, 1, dataRowCount, 6).clearFormat();
+      // D열 정답목록만 텍스트로 유지해 '2, 4' 등이 숫자/날짜로 바뀌지 않도록 함 (값 쓰기 전에 적용)
+      answerSheet.getRange(2, 4, rowsToWrite.length, 1).setNumberFormat('@');
       answerSheet.getRange(2, 1, rowsToWrite.length, 6).setValues(rowsToWrite);
     }
 
@@ -918,15 +947,24 @@ function remapSubmissionsToQuestions(questions, rowsToWrite) {
 }
 
 function clearSubmissionRecords(passwordInput) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const settings = getSettingsMap();
-  if (String(passwordInput).trim() !== String(settings.teacherPassword).trim()) {
-    return { success: false, message: '비밀번호가 일치하지 않습니다.' };
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const settings = getSettingsMap();
+    if (String(passwordInput).trim() !== String(settings.teacherPassword).trim()) {
+      return { success: false, message: '비밀번호가 일치하지 않습니다.' };
+    }
+    const resultSheet = ss.getSheetByName('제출결과');
+    const lastRow = resultSheet.getLastRow();
+    if (lastRow > 1) {
+      resultSheet.deleteRows(2, lastRow - 1);
+    }
+    return { success: true, message: '모든 제출 기록이 초기화되었습니다.' };
+  } catch (err) {
+    return { success: false, message: '초기화 오류: ' + err.message };
+  } finally {
+    lock.releaseLock();
   }
-  const resultSheet = ss.getSheetByName('제출결과');
-  const lastRow = resultSheet.getLastRow();
-  if (lastRow > 1) {
-    resultSheet.deleteRows(2, lastRow - 1);
-  }
-  return { success: true, message: '모든 제출 기록이 초기화되었습니다.' };
 }
