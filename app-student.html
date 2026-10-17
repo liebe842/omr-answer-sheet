@@ -29,6 +29,7 @@
       if (!ok) { clearSavedSubmission(); return null; }
       return s;
     } catch (e) {
+      clearSavedSubmission(); // 깨진 값
       return null;
     }
   }
@@ -75,7 +76,7 @@
             if (readOnly) {
               if (val && opts2.indexOf(val) < 0) html += '<span class="answer-read">' + escapeHtml(val) + '</span>';
             } else {
-              html += '<input type="text" class="line-input other-num" data-q="' + Number(q.qNum) + '" data-b="' + b + '" data-kind="other" inputmode="numeric" autocomplete="off" aria-label="' + Number(q.qNum) + '번 다른 번호' + (n > 1 ? ' (' + (b + 1) + ')' : '') + '" value="' + escapeHtml(val) + '">';
+              html += '<input type="text" class="line-input other-num" data-q="' + Number(q.qNum) + '" data-b="' + b + '" data-kind="other" placeholder="기타" inputmode="numeric" autocomplete="off" aria-label="' + Number(q.qNum) + '번 다른 번호' + (n > 1 ? ' (' + (b + 1) + ')' : '') + '" value="' + escapeHtml(val) + '">';
             }
           }
         } else if (q.qType === '서술형') {
@@ -88,8 +89,8 @@
         html += '</div>';
       }
       var g = grades ? grades[q.qNum] : null;
-      if (g && opts.showCorrect && g.status !== 'O' && g.correctAnswer) {
-        html += '<div class="red-pen correct-note">→ ' + escapeHtml(g.correctAnswer) + '</div>';
+      if (g && opts.showCorrect && (g.status === 'X' || g.status === '△') && g.correctAnswer) {
+        html += '<div class="red-pen correct-note">→ <span class="correct-value">' + escapeHtml(g.correctAnswer) + '</span></div>';
       }
       html += '</td><td class="mark">' + (opts.thirdHeader ? gradeMarkHtml(g) : escapeHtml(q.points)) + '</td></tr>';
     });
@@ -371,9 +372,10 @@
     sById('studentName').readOnly = true;
     sById('studentAfter').innerHTML =
       '<div class="table-wrap dim">' + renderAnswerSheet(studentQuestions, { readOnly: true, answers: saved.answers, thirdHeader: '채점' }) + '</div>' +
-      '<div id="waitingNote" class="inline-note"><b>답안지를 냈어요.</b><br>선생님이 채점하시면 이 화면에 바로 나와요.</div>' +
+      '<div id="waitingNote" class="inline-note" role="status" tabindex="-1"><b>답안지를 냈어요.</b><br>선생님이 채점하시면 이 화면에 바로 나와요.</div>' +
       '<p id="pollTime" class="poll-time"></p>' +
       '<div class="submit-row"><button type="button" id="newStudentLink" class="link-quiet" data-action="new-student">다른 학생이 새로 쓰기</button></div>';
+    sById('waitingNote').focus();
     startWaitingPoll();
   }
 

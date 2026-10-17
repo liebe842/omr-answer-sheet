@@ -119,6 +119,7 @@
     background: none;
     border: 0;
     padding: 10px 4px;
+    min-height: 44px;
     color: var(--ink-soft);
     font: 400 13px var(--font-body);
     text-decoration: underline;
@@ -275,6 +276,7 @@
   .answer-table td.mark .grade-glyph { font-size: 28px; }
   .answer-table td.mark .grade-score { font-size: 19px; }
   .correct-note { font-size: 22px; padding-left: 2px; overflow-wrap: anywhere; }
+  .correct-value { font-family: var(--font-body); font-size: 15px; font-weight: 700; }
   .result-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
   .result-comment { margin: 0; font-size: 22px; overflow-wrap: anywhere; }
   .stamp { flex: none; color: var(--red-pen); }
@@ -301,6 +303,10 @@
     .result-total { right: 12px; }
     .result-total .red-circle { font-size: 26px; min-width: 48px; padding: 0 10px; }
     .correct-note { font-size: 20px; }
+    .line-input.other-num { width: 56px; height: 36px; padding: 0 2px; border: 1px solid var(--ink); margin: 4px 0; font-size: 16px; }
+    .line-input.other-num::placeholder { font-size: 12px; color: var(--ink-soft); }
+    .answer-table .blank-row { gap: 0; }
+    .answer-table .blank-label { margin-right: 4px; }
   }
 
   @media (prefers-reduced-motion: reduce) {

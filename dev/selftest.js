@@ -442,6 +442,7 @@
     assertEq(localStorage.getItem(SAVED_KEY), null, '초과는 삭제');
     localStorage.setItem(SAVED_KEY, '{깨진 json');
     assertEq(readSavedSubmission('시험A', 1), null);
+    assertEq(localStorage.getItem(SAVED_KEY), null, '깨진 값은 삭제');
     var origGet = Storage.prototype.getItem, origSet = Storage.prototype.setItem;
     try {
       Storage.prototype.getItem = function () { throw new Error('막힘'); };
@@ -469,6 +470,8 @@
     await submitAnswers();
     var note = document.getElementById('waitingNote');
     assertTrue(note !== null && note.offsetParent !== null, '대기 안내 보임');
+    assertEq(note.getAttribute('role'), 'status');
+    assertEq(document.activeElement, note, '포커스가 안내로');
     assertTrue(note.textContent.indexOf('답안지를 냈어요.') >= 0);
     assertTrue(note.textContent.indexOf('선생님이 채점하시면 이 화면에 바로 나와요.') >= 0);
     assertTrue(document.getElementById('answerForm').hidden, '폼 숨김');
@@ -483,6 +486,7 @@
     await loadStudentScreen(); // 앞 테스트가 저장한 기록이 남아 있다
     assertTrue(document.getElementById('waitingNote') !== null && document.getElementById('answerForm').hidden, '대기 복귀');
     assertEq(document.getElementById('studentName').value, '대기생');
+    assertEq(document.getElementById('waitingNote').getAttribute('role'), 'status');
     assertEq(document.querySelector('#studentAfter tr[data-row="2"] .bubble[aria-pressed="true"][data-b="1"]').getAttribute('data-v'), '4');
     await sleep(100);
     assertEq(callsOf('checkStudentResultStatus').pop().payload, { studentNumber: '11', studentName: '대기생' });
@@ -636,6 +640,18 @@
     assertEq(document.querySelector('tr[data-row="5"] .grade-score').textContent, '7.5');
     assertEq(document.querySelectorAll('.stamp').length, 0);
     assertEq(getComputedStyle(document.querySelector('.correct-note')).color, 'rgb(214, 38, 43)');
+  }, { scenario: 'perfect' });
+  test('perfect: 보류·알 수 없는 상태에는 정답 줄이 없다', async function () {
+    renderResult({
+      published: true, studentNumber: '1', studentName: '김하늘', showScore: true, showCorrectAnswers: true,
+      totalScore: 0, maxScore: 10, isPerfectScore: false, teacherComment: '',
+      details: [
+        { qNum: 5, qType: '단답식', userAnswer: '세종', status: 'O', earnedPoints: 5, maxPoints: 5, correctAnswer: '세종' },
+        { qNum: 6, qType: '서술형', userAnswer: '답', status: '보류', earnedPoints: 0, maxPoints: 10, correctAnswer: '채점 기준' },
+        { qNum: 1, qType: '객관식', userAnswer: '2', status: '?', earnedPoints: 0, maxPoints: 5, correctAnswer: '3' }
+      ]
+    });
+    assertEq(document.querySelectorAll('.correct-note').length, 0);
   }, { scenario: 'perfect' });
   test('perfect: showScore가 false면 표시·총점 없이 안내와 한 말씀', async function () {
     renderResult({
