@@ -357,7 +357,7 @@
   tr.is-pending td { background: var(--paper-lift); }
   .score-input { -moz-appearance: textfield; appearance: textfield; padding: 0 2px; }
   .score-input::-webkit-inner-spin-button, .score-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-  .score-input::placeholder { color: var(--ink-soft); font: 400 12px var(--font-body); }
+  .score-input::placeholder { color: var(--ink-soft); font: 700 14px var(--font-body); }
 
   .grade-split { display: grid; grid-template-columns: minmax(170px, 210px) minmax(0, 1fr); gap: 16px; align-items: start; }
   .roster-table th { white-space: nowrap; }
@@ -410,8 +410,10 @@
   .nowrap { white-space: nowrap; }
   .stat-table td, .roster-all td { font-size: 13px; }
   .roster-all td:last-child { min-width: 320px; }
-  .ink-track { display: inline-block; width: 140px; max-width: 45%; height: 10px; vertical-align: middle; margin-right: 8px; }
-  .ink-bar { display: block; height: 10px; background: var(--ink); }
+  .stat-table th, .roster-all th { white-space: nowrap; }
+  .bar-cell { display: flex; align-items: center; gap: 8px; }
+  .glyph { font-family: "Malgun Gothic", "Apple SD Gothic Neo", "Segoe UI Symbol", sans-serif; font-size: 15px; }
+  .ink-bar { flex: none; display: block; height: 10px; background: var(--ink); }
   .bar-text { vertical-align: middle; white-space: nowrap; }
   .clear-area { margin-top: 28px; padding-top: 14px; border-top: 1px solid var(--ink); }
   .clear-ask { margin: 0 0 8px; font-weight: 700; }

@@ -218,9 +218,21 @@
   }
   function runInRowQueue(rowIndex, job) {
     var r = rowBook(rowIndex);
+    gradeInflight++;
     var p = r.chain.then(job);
     r.chain = p.catch(function () {});
+    var done = function () { gradeInflight--; };
+    p.then(done, done);
     return p;
+  }
+  // 채점 저장이 진행 중인 개수: 0이 아니면 기록 지우기와 설정 저장을 미룬다
+  var gradeInflight = 0;
+  var GRADE_BUSY_NOTE = '채점 저장이 끝난 뒤에 다시 눌러주세요.';
+  // 기록이 바뀐 뒤(지우기, 문항 저장): 행 번호와 문항 번호로 묶인 채점 기억을 비운다
+  function resetGradeBook() {
+    gradeCells = {}; gradeRows = {}; commentDrafts = {};
+    teacherState.selectedRowIndex = null;
+    teacherState.selectedQNum = null;
   }
 
   function findSub(rowIndex) {
@@ -764,8 +776,8 @@
         var rate = Math.max(0, Math.min(100, Number(s.errorRate) || 0));
         var width = rate > 0 ? Math.max(2, rate) : 0;
         html += '<tr><td class="num">' + escapeHtml(s.qNum) + '</td>'
-          + '<td><span class="ink-track"><span class="ink-bar" style="width:' + width + '%"></span></span>'
-          + '<span class="bar-text">' + escapeHtml(s.wrongCount) + '명 (' + pctText(rate) + '%)</span></td>'
+          + '<td><div class="bar-cell"><span class="ink-bar" style="width:' + (width * 1.4) + 'px"></span>'
+          + '<span class="bar-text">' + escapeHtml(s.wrongCount) + '명 (' + pctText(rate) + '%)</span></div></td>'
           + '<td>' + escapeHtml(s.topWrongAnswer) + '</td></tr>';
       });
       html += '</tbody></table></div>';
@@ -783,7 +795,7 @@
           + '<td>' + escapeHtml(s.studentName) + '</td>'
           + '<td class="nowrap">' + escapeHtml(fmtScore(s.totalScore)) + '점</td>'
           + '<td class="nowrap">' + (s.isCompleted ? '완료' : '대기') + '</td>'
-          + '<td>' + escapeHtml(s.summary) + '</td></tr>';
+          + '<td>' + escapeHtml(s.summary).replace(/△/g, '<span class="glyph">△</span>') + '</td></tr>';
       });
       html += '</tbody></table></div>';
     }
@@ -804,8 +816,16 @@
     }
   }
 
+  function showClearNote(msg) {
+    var area = tEl('clearArea');
+    var n = area.querySelector('.inline-error');
+    if (!n) { n = document.createElement('p'); n.className = 'inline-error'; n.setAttribute('role', 'status'); area.appendChild(n); }
+    n.textContent = msg;
+  }
+
   async function clearRecords() {
     if (clearing) return;
+    if (gradeInflight > 0) { showClearNote(GRADE_BUSY_NOTE); return; }
     clearing = true;
     var btn = tEl('clearConfirmBtn');
     if (btn) btn.disabled = true;
@@ -820,6 +840,7 @@
     if (session !== teacherSession) return;
     clearAsked = false;
     if (res && res.success) {
+      resetGradeBook();
       showToast(res.message || '제출 기록을 모두 지웠어요.');
       await refreshTeacherData();
     } else {
@@ -903,7 +924,14 @@
     if (setupDraft && setupDraft.dirty && tEl('setupRows')) return; // 쓰던 편집을 지키기
     setupDraft = buildSetupDraft();
     var st = setupDraft.settings;
-    var focusedId = document.activeElement && tEl('panelSetup').contains(document.activeElement) ? document.activeElement.id : '';
+    var fa = document.activeElement && tEl('panelSetup').contains(document.activeElement) ? document.activeElement : null;
+    var focusSel = '';
+    if (fa) {
+      var fr = fa.closest('tr[data-idx]');
+      if (fa.id) focusSel = '#' + fa.id;
+      else if (fr && fa.getAttribute('data-f')) focusSel = 'tr[data-idx="' + fr.getAttribute('data-idx') + '"] [data-f="' + fa.getAttribute('data-f') + '"]';
+      else if (fr && fa.hasAttribute('data-del')) focusSel = 'tr[data-idx="' + fr.getAttribute('data-idx') + '"] [data-del]';
+    }
     tEl('panelSetup').innerHTML =
       '<h2 class="panel-h">정답표</h2>'
       + '<p class="rule-line">쉼표(,)로 나누면 빈칸이 늘어나요. 예: 2, 4</p>'
@@ -929,7 +957,8 @@
       + '<p class="inline-error" id="setupError" hidden></p>'
       + '<p class="setup-save"><button type="button" class="btn-ink" id="setupSaveBtn">저장</button></p>';
     renderSetupRows();
-    if (focusedId && tEl(focusedId)) tEl(focusedId).focus(); // 새로고침으로 다시 그려도 포커스를 지킨다
+    var fel = focusSel ? tEl('panelSetup').querySelector(focusSel) : null;
+    if (fel) fel.focus(); // 새로고침으로 다시 그려도 포커스를 지킨다
   }
 
   function markSetupDirty() {
@@ -1040,6 +1069,12 @@
   async function saveSetup() {
     var d = setupDraft;
     if (!d || d.saving) return;
+    if (gradeInflight > 0) {
+      var busy = tEl('setupError');
+      busy.textContent = GRADE_BUSY_NOTE;
+      busy.hidden = false;
+      return;
+    }
     var bad = validateSetup();
     if (bad) {
       var err = tEl('setupError');
@@ -1089,6 +1124,7 @@
       return { qNum: q.qNum, qType: q.qType, blankCount: blankCountOfDraft(q), rawAnswerStr: q.rawAnswerStr, points: q.points, partialCredit: q.partialCredit };
     });
     setupDraft = null;
+    resetGradeBook();
     renderTopBar();
     if (teacherState.tab === 'setup') { renderSetupPanel(); tEl('setupSaveBtn').focus(); }
     showToast('저장했어요');

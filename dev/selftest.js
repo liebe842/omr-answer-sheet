@@ -1647,6 +1647,48 @@
     });
   }, { scenario: 'teacher' });
 
+  test('clear: 쓰던 한 말씀은 기록을 지운 뒤 새 학생에게 남지 않는다', async function () {
+    await freshTeacher();
+    teacherState.gradeView = 'byStudent';
+    switchTab('grade');
+    var sub = teacherState.submissions.filter(function (s) { return Number(s.rowIndex) === 2; })[0];
+    document.querySelector('[data-pick-row="' + sub.rowIndex + '"]').click();
+    setVal(document.getElementById('commentInput'), '지워질 말');
+    switchTab('results');
+    document.getElementById('clearRecordsBtn').click();
+    document.getElementById('clearConfirmBtn').click();
+    await sleep(200);
+    assertEq(teacherState.submissions.length, 0);
+    await serverCall('submitStudentAnswers', { studentNumber: '9', studentName: '새학생', answers: {} });
+    await refreshTeacherData();
+    teacherState.gradeView = 'byStudent';
+    switchTab('grade');
+    var inp = document.getElementById('commentInput');
+    assertTrue(inp !== null);
+    assertEq(inp.value, '');
+    assertEq(commentDrafts[teacherState.selectedRowIndex], undefined);
+  }, { scenario: 'teacher' });
+  test('clear/setup: 채점 저장이 진행 중이면 서버에 보내지 않고 안내한다', async function () {
+    await freshTeacher();
+    window.__stubDelay = 120;
+    switchTab('grade');
+    document.querySelector('.mark-cell[data-mark="O"]').click();
+    assertTrue(gradeInflight > 0, '저장 진행 중');
+    switchTab('setup');
+    setVal(document.querySelector('#setupRows tr[data-idx="0"] [data-f="answer"]'), '4');
+    document.getElementById('setupSaveBtn').click();
+    await sleep(10);
+    assertEq(callsOf('saveTeacherConfig').length, 0);
+    assertEq(document.getElementById('setupError').textContent, '채점 저장이 끝난 뒤에 다시 눌러주세요.');
+    switchTab('results');
+    document.getElementById('clearRecordsBtn').click();
+    document.getElementById('clearConfirmBtn').click();
+    assertEq(callsOf('clearSubmissionRecords').length, 0);
+    assertTrue(document.getElementById('clearArea').textContent.indexOf('채점 저장이 끝난 뒤에 다시 눌러주세요.') >= 0);
+    await sleep(400);
+    window.__stubDelay = undefined;
+  }, { scenario: 'teacher' });
+
   // ===== 실행 =====
   async function runAll() {
     var result = { pass: 0, fail: 0, failures: [] };
