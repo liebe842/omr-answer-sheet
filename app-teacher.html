@@ -308,6 +308,17 @@
     var rec = sub && sub.perQuestionMap ? sub.perQuestionMap[qNum] : null;
     return rec ? { status: rec.status, earned: Number(rec.earnedPoints) || 0 } : null;
   }
+  // 서버에 저장된 값 기준 보류 문항
+  function savedPendingQNums(sub) {
+    var map = sub.perQuestionMap || {};
+    return teacherState.questions.map(function (q) { return Number(q.qNum); }).sort(function (a, b) { return a - b; })
+      .filter(function (n) { return !!map[n] && map[n].status === '보류'; });
+  }
+  // 화면을 불러온 뒤 다른 곳에서 기록이 바뀌었다
+  function recordChangedElsewhere() {
+    showToast('다른 곳에서 바뀐 기록이에요. 새로고침했어요.', 'error');
+    refreshTeacherData();
+  }
   function pendingQNums(sub) {
     return teacherState.questions.map(function (q) { return Number(q.qNum); }).sort(function (a, b) { return a - b; })
       .filter(function (n) { var m = effectiveMark(sub.rowIndex, n); return !!m && m.status === '보류'; });
@@ -545,6 +556,7 @@
     c.shown = { status: status, earned: earned };
     paintCell(rowIndex, qNum);
     clearScoreError(rowIndex, qNum);
+    if (Number(teacherState.selectedRowIndex) === Number(rowIndex)) refreshFinishWarning(sub);
     var session = teacherSession, rowKey = sub.rowKey;
     return runInRowQueue(rowIndex, async function () {
       if (session !== teacherSession) return;
@@ -553,7 +565,7 @@
       if (!s || s.rowKey !== rowKey) {
         c.done = true;
         paintCell(rowIndex, qNum, true);
-        showToast('제출 기록이 바뀌었어요. 새로고침한 뒤 다시 매겨 주세요.', 'error');
+        recordChangedElsewhere();
         return;
       }
       var payload = buildGradePayload(s, qNum, status, earned, max);
@@ -576,9 +588,16 @@
         paintRowSummary(rowIndex);
         return;
       }
+      if (res && res.success) { // 저장은 됐지만 그 사이 새로고침으로 기록이 바뀌었다
+        c.done = true;
+        recordChangedElsewhere();
+        return;
+      }
       if (latest) {
         c.done = true;
         paintCell(rowIndex, qNum, true);
+        var curSub = findSub(rowIndex);
+        if (curSub && Number(teacherState.selectedRowIndex) === Number(rowIndex)) refreshFinishWarning(curSub);
       }
       showToast('채점을 저장하지 못했어요. ' + ((res && res.message) || '다시 눌러 주세요.'), 'error');
     });
@@ -635,7 +654,8 @@
     gradeBook();
     var sub = findSub(rowIndex);
     if (!sub) return;
-    if (mode === 'auto') {
+    var fromAuto = mode === 'auto';
+    if (fromAuto) {
       var pending = pendingQNums(sub);
       if (pending.length) { showFinishWarning(pending); return; }
       mode = 'complete';
@@ -652,9 +672,15 @@
     var res = await runInRowQueue(rowIndex, async function () {
       if (session !== teacherSession) return null;
       var s = findSub(rowIndex);
-      if (!s || s.rowKey !== rowKey) return { success: false, message: '제출 기록이 바뀌었어요. 새로고침해 주세요.' };
+      if (!s || s.rowKey !== rowKey) return { success: false, changed: true };
+      if (fromAuto) {
+        // 앞 저장이 끝난 뒤 저장된 값으로 다시 확인: 실패해 보류로 돌아간 칸이 있으면 완료하지 않는다
+        var still = savedPendingQNums(s);
+        if (still.length) return { warn: still };
+      }
       var payload = { authPassword: teacherState.pw, rowIndex: s.rowIndex, rowKey: rowKey, teacherComment: comment };
-      if (mode === 'complete') payload.forceComplete = true;
+      // 한 말씀만 저장은 완료 상태를 지금 값 그대로 둔다
+      payload.forceComplete = mode === 'complete' ? true : s.isCompleted === true;
       try {
         return await serverCall('updateStudentQuestionGrade', payload);
       } catch (e) {
@@ -665,7 +691,12 @@
     if (session !== teacherSession) return;
     if (area) area.removeAttribute('aria-busy');
     var cur = findSub(rowIndex);
-    if (!res || !res.success || !cur || cur.rowKey !== rowKey) {
+    if (res && res.warn) {
+      if (Number(teacherState.selectedRowIndex) === Number(rowIndex)) showFinishWarning(res.warn);
+      return;
+    }
+    if ((res && res.changed) || (res && res.success && (!cur || cur.rowKey !== rowKey))) { recordChangedElsewhere(); return; }
+    if (!res || !res.success) {
       showToast('저장하지 못했어요. ' + ((res && res.message) || '다시 눌러 주세요.'), 'error');
       return;
     }

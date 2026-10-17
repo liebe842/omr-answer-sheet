@@ -1252,7 +1252,7 @@
     assertEq(teacherState.selectedRowIndex, 5);
   }, { scenario: 'teacher' });
 
-  test('grade: 한 말씀만 저장은 forceComplete 를 보내지 않고 다음 학생으로', async function () {
+  test('grade: 한 말씀만 저장은 지금 완료 상태(false)를 보내고 다음 학생으로', async function () {
     if (FAIL_MODE) return;
     await gradeLogin();
     tById('gvByStudent').click();
@@ -1266,7 +1266,7 @@
     var calls = gradeCalls();
     assertEq(calls.length - n0, 1);
     var p = calls[calls.length - 1].payload;
-    assertEq('forceComplete' in p, false);
+    assertEq(p.forceComplete, false, 'R11: 한 말씀만 저장은 지금 완료 상태를 그대로 보낸다');
     assertEq(p.teacherComment, '조금만 더 써 봐요.');
     assertEq(p.rowIndex, 5);
     assertEq(subOf(5).isCompleted, false);
@@ -1275,6 +1275,84 @@
     assertEq(teacherState.selectedRowIndex, 6);
     assertEq(tById('gradeStudentName').textContent, '5번 정우진');
     assertEq(tById('commentInput').value, '');
+  }, { scenario: 'teacher' });
+
+  test('grade: 마지막 보류 저장이 실패하면 뒤따른 채점 끝은 완료하지 않고 안내를 띄운다', async function () {
+    if (FAIL_MODE) return;
+    await gradeLogin();
+    tById('gvByStudent').click();
+    document.querySelector('#gradeRoster button[data-pick-row="5"]').click();
+    window.__stubFailQueue = { updateStudentQuestionGrade: [true] };
+    var n0 = gradeCalls().length;
+    markBtn(5, 6, 'O').click();
+    tById('finishStudentBtn').click(); // 낙관적 표시로는 보류가 없어 보인다
+    await sleep(60);
+    var mine = gradeCalls().slice(n0);
+    assertEq(mine.length, 1, '채점 칸 저장만 갔다');
+    assertEq(mine.some(function (c) { return c.payload.forceComplete === true; }), false);
+    assertEq(subOf(5).isCompleted, false);
+    assertEq(pressedMarks(5, 6), []);
+    var warn = document.querySelector('#finishArea .finish-warn');
+    assertTrue(warn !== null, '안내가 보여야 함');
+    assertEq(warn.textContent, '아직 안 매긴 서술형이 있어요(6번). 완료하면 0점으로 보여요.');
+    assertEq(textsOf('#finishArea button'), ['한 말씀만 저장', '그래도 완료']);
+    assertTrue(tById('toast').classList.contains('error'), '오류 토스트가 덮이지 않는다');
+    assertEq(teacherState.selectedRowIndex, 5);
+  }, { scenario: 'teacher' });
+
+  test('grade: 완료된 학생에게 보류가 있어도 한 말씀만 저장은 완료를 유지한다', async function () {
+    if (FAIL_MODE) return;
+    window.__stubReset();
+    window.__stubDelay = 0;
+    window.__stubFailQueue = {};
+    var d = await serverCall('verifyTeacherAndGetData', '1234');
+    var s2 = d.submissions.filter(function (x) { return x.rowIndex === 2; })[0];
+    await serverCall('updateStudentQuestionGrade', { authPassword: '1234', rowIndex: 2, rowKey: s2.rowKey,
+      updatedQuestions: { 6: { status: '보류', earnedPoints: 0, maxPoints: 10 } }, forceComplete: true });
+    await teacherLogin('1234');
+    tById('gvByStudent').click();
+    document.querySelector('#gradeRoster button[data-pick-row="2"]').click();
+    await finishStudent(2, 'auto');
+    assertTrue(document.querySelector('#finishArea .finish-warn') !== null);
+    document.querySelector('#finishArea button[data-finish="commentOnly"]').click();
+    await sleep(40);
+    var p = gradeCalls().pop().payload;
+    assertEq(p.forceComplete, true);
+    assertEq(subOf(2).isCompleted, true);
+    assertTrue(tById('tCounts').textContent.indexOf('채점 대기 3명') >= 0, tById('tCounts').textContent);
+  }, { scenario: 'teacher' });
+
+  test('grade: 안내 뒤 마지막 보류를 매기고 바로 한 말씀만 저장하면 forceComplete false', async function () {
+    if (FAIL_MODE) return;
+    await gradeLogin();
+    tById('gvByStudent').click();
+    document.querySelector('#gradeRoster button[data-pick-row="5"]').click();
+    await finishStudent(5, 'auto');
+    assertTrue(document.querySelector('#finishArea .finish-warn') !== null);
+    markBtn(5, 6, 'O').click();
+    assertEq(document.querySelector('#finishArea .finish-warn'), null, '매기면 안내가 원래 단추로 돌아간다');
+    assertEq(textsOf('#finishArea button'), ['이전 학생', '채점 끝, 다음 학생']);
+    var n0 = gradeCalls().length;
+    var pr = finishStudent(5, 'commentOnly');
+    await pr;
+    var mine = gradeCalls().slice(n0);
+    assertEq(mine.length, 2);
+    assertEq(mine[0].payload.updatedQuestions[6].status, 'O');
+    assertEq('forceComplete' in mine[1].payload, true);
+    assertEq(mine[1].payload.forceComplete, false);
+    assertEq(subOf(5).isCompleted, false);
+  }, { scenario: 'teacher' });
+
+  test('grade: 저장 뒤 기록이 바뀌었으면 고정 문구로 알리고 새로고침한다', async function () {
+    if (FAIL_MODE) return;
+    await gradeLogin();
+    var n0 = window.__gasCalls.filter(function (c) { return c.fn === 'verifyTeacherAndGetData'; }).length;
+    markBtn(4, 6, 'O').click();
+    subOf(4).rowKey = 'other'; // 응답 전에 기록이 바뀐 것처럼
+    await sleep(60);
+    assertEq(tById('toast').textContent, '다른 곳에서 바뀐 기록이에요. 새로고침했어요.');
+    var n1 = window.__gasCalls.filter(function (c) { return c.fn === 'verifyTeacherAndGetData'; }).length;
+    assertEq(n1 - n0, 1);
   }, { scenario: 'teacher' });
 
   test('grade: 그래도 완료는 forceComplete true, 마지막 학생이면 멈춘다', async function () {

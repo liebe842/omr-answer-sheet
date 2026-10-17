@@ -467,6 +467,17 @@
     #gradeSheet th.correct-col { width: 76px; }
   }
 
+  /* 손가락으로 누르는 기기: 채점 칸을 44px 로 */
+  @media (pointer: coarse) {
+    .mark-cell { width: 44px; height: 44px; }
+    .score-input { height: 44px; }
+  }
+  @media (pointer: coarse) and (max-width: 520px) {
+    .sheet-table th.mark-col, .sheet-table td.mark-td { width: 104px; }
+    .grade-cell .mark-cells { width: 92px; }
+    .grade-cell .score-input { width: 44px; }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { transition: none !important; animation: none !important; }
     .stamp--hit { animation: none; }
